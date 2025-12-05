@@ -271,6 +271,7 @@ extension ServiceController {
         for model in dataModels {
             model.$service.id = service.id!
             model.$endpoint.id = UUID()
+            try await model.save(on: req.db)
         }
         
         // Обновляем ID моделей в endpoints (чтобы ссылки были корректными)

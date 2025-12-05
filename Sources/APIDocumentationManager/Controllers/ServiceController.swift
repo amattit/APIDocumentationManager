@@ -267,6 +267,12 @@ extension ServiceController {
         // Сохраняем сервис
         try await service.save(on: req.db)
         
+        // Сохраняем модели данных
+        for model in dataModels {
+            model.$service.id = service.id!
+            model.$endpoint.id = UUID()
+        }
+        
         // Обновляем ID моделей в endpoints (чтобы ссылки были корректными)
         let modelDictionary = Dictionary(uniqueKeysWithValues: dataModels.map { ($0.name, $0.id) })
         
@@ -311,22 +317,6 @@ extension ServiceController {
             
             try await endpoint.save(on: req.db)
             savedEndpoints.append(endpoint)
-        }
-        
-        // Сохраняем модели данных
-        for model in dataModels {
-            model.$service.id = service.id!
-            for endpoint in endpoints {
-                try await endpoint.$responseModels.load(on: req.db)
-            }
-            let endpoint = endpoints.first { point in
-                
-                return point.responseModels.contains { cmodel in
-                    cmodel.id == model.id
-                }
-            }
-            model.$endpoint.id = try endpoint!.requireID()
-            try await model.save(on: req.db)
         }
         
         return ImportWithSchemasResponse(

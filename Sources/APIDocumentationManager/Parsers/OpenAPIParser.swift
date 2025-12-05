@@ -1,47 +1,56 @@
-//
-//  File.swift
-//  
-//
-//  Created by seregin-ma on 05.12.2025.
-//
-
 import Foundation
-import Yams
 import Vapor
 
+public struct APIParameterData: Codable {
+    public let name: String
+    public let type: String
+    public let location: ParameterLocation
+    public let required: Bool
+    public let description: String?
+    public let example: String?
+    
+    public enum ParameterLocation: String, Codable {
+        case query
+        case path
+        case header
+        case cookie
+    }
+    
+    public init(name: String,
+                type: String,
+                location: ParameterLocation,
+                required: Bool = false,
+                description: String? = nil,
+                example: String? = nil) {
+        self.name = name
+        self.type = type
+        self.location = location
+        self.required = required
+        self.description = description
+        self.example = example
+    }
+}
+
+public enum OpenAPIFormat: String, Content {
+    case json = "json"
+    case yaml = "yaml"
+}
 public protocol OpenAPIParserProtocol {
     func parse(from data: Data, format: OpenAPIFormat) throws -> (Service, [APIEndpoint])
     func parse(from fileURL: URL) throws -> (Service, [APIEndpoint])
 }
-
-public enum OpenAPIFormat: String, Content {
-    case yaml
-    case json
-}
-
 public struct OpenAPIParser: OpenAPIParserProtocol {
-    private let decoder: JSONDecoder
     
-    public init() {
-        self.decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-    }
+    public init() {}
     
     public func parse(from data: Data, format: OpenAPIFormat) throws -> (Service, [APIEndpoint]) {
-        let openAPIDocument: OpenAPIDocument
-        
-        switch format {
-        case .yaml:
-            let yamlString = String(data: data, encoding: .utf8) ?? ""
-            openAPIDocument = try YAMLDecoder().decode(OpenAPIDocument.self, from: yamlString)
-        case .json:
-            openAPIDocument = try decoder.decode(OpenAPIDocument.self, from: data)
+        // Парсим JSON напрямую через JSONSerialization
+        let jsonObject = try JSONSerialization.jsonObject(with: data)
+        guard let dict = jsonObject as? [String: Any] else {
+            throw ParsingError.invalidFormat
         }
         
-        let service = try createService(from: openAPIDocument)
-        let endpoints = try createEndpoints(from: openAPIDocument, serviceId: service.id ?? UUID())
-        
-        return (service, endpoints)
+        return try parseOpenAPIDocument(from: dict)
     }
     
     public func parse(from fileURL: URL) throws -> (Service, [APIEndpoint]) {
@@ -50,16 +59,52 @@ public struct OpenAPIParser: OpenAPIParserProtocol {
         return try parse(from: data, format: format)
     }
     
-    private func createService(from document: OpenAPIDocument) throws -> Service {
-        // Извлекаем информацию о сервисе из OpenAPI документа
-        let servers = document.servers ?? []
-        let environments = servers.map { server -> ServiceEnvironment in
+    private func parseOpenAPIDocument(from dict: [String: Any]) throws -> (Service, [APIEndpoint]) {
+        // Парсим информацию о сервисе
+        guard let info = dict["info"] as? [String: Any],
+              let title = info["title"] as? String,
+              let version = info["version"] as? String else {
+            throw ParsingError.missingRequiredFields
+        }
+        
+        // Создаем сервис
+        let service = Service(
+            name: title,
+            version: version,
+            type: .internalService,
+            department: "Unknown",
+            description: info["description"] as? String,
+            environments: parseServers(dict["servers"]),
+            owner: (info["contact"] as? [String: String])?["name"],
+            contactEmail: (info["contact"] as? [String: String])?["email"]
+        )
+        
+        // Парсим endpoints
+        guard let paths = dict["paths"] as? [String: Any] else {
+            throw ParsingError.missingPaths
+        }
+        
+        let endpoints = try parsePaths(paths, serviceId: service.id ?? UUID())
+        
+        return (service, endpoints)
+    }
+    
+    private func parseServers(_ servers: Any?) -> [ServiceEnvironment] {
+        guard let serversArray = servers as? [[String: Any]] else {
+            return []
+        }
+        
+        return serversArray.compactMap { server in
+            guard let url = server["url"] as? String else { return nil }
+            
             let envType: EnvironmentType
-            if server.url.contains("stage") || server.url.contains("staging") {
+            let lowercasedURL = url.lowercased()
+            
+            if lowercasedURL.contains("stage") || lowercasedURL.contains("staging") {
                 envType = .stage
-            } else if server.url.contains("preprod") || server.url.contains("pre-production") {
+            } else if lowercasedURL.contains("preprod") || lowercasedURL.contains("pre-production") {
                 envType = .preprod
-            } else if server.url.contains("prod") || server.url.contains("production") {
+            } else if lowercasedURL.contains("prod") || lowercasedURL.contains("production") {
                 envType = .prod
             } else {
                 envType = .development
@@ -67,70 +112,30 @@ public struct OpenAPIParser: OpenAPIParserProtocol {
             
             return ServiceEnvironment(
                 type: envType,
-                host: URL(string: server.url)?.host ?? server.url,
-                baseURL: server.url,
-                description: server.description
+                host: URL(string: url)?.host ?? "unknown",
+                baseURL: url,
+                description: server["description"] as? String
             )
         }
-        
-        return Service(
-            name: document.info.title,
-            version: document.info.version,
-            type: .internalService, // Можно определить по домену
-            department: "", // Требует дополнительной информации
-            description: document.info.description,
-            environments: environments,
-            owner: document.info.contact?.name,
-            contactEmail: document.info.contact?.email
-        )
     }
     
-    private func createEndpoints(from document: OpenAPIDocument, serviceId: UUID) throws -> [APIEndpoint] {
+    private func parsePaths(_ paths: [String: Any], serviceId: UUID) throws -> [APIEndpoint] {
         var endpoints: [APIEndpoint] = []
         
-        for (path, pathItem) in document.paths {
-            for (method, operation) in pathItem.operations {
-                guard let httpMethod = HTTPMethod(rawValue: method.uppercased()) else {
+        for (path, pathData) in paths {
+            guard let pathDict = pathData as? [String: Any] else { continue }
+            
+            for (method, operationData) in pathDict {
+                guard let operationDict = operationData as? [String: Any],
+                      let httpMethod = HTTPMethod(rawValue: method.uppercased()) else {
                     continue
                 }
                 
-                let parameters = operation.parameters?.map { param -> APIParameter in
-                    APIParameter(
-                        name: param.name,
-                        type: param.schema?.type ?? "string",
-                        location: APIParameter.ParameterLocation(rawValue: param.`in`.rawValue) ?? .query,
-                        required: param.required ?? false,
-                        description: param.description,
-                        example: param.example as? String
-                    )
-                } ?? []
-                
-                let responses = operation.responses.map { (code, response) -> APIResponse in
-                    let statusCode = Int(code) ?? 200
-                    let contentType = response.content?.keys.first ?? "application/json"
-                    let schema = response.content?[contentType]?.schema?.description
-                    
-                    return APIResponse(
-                        statusCode: statusCode,
-                        description: response.description,
-                        contentType: contentType,
-                        schema: schema
-                    )
-                }
-                
-                let endpoint = APIEndpoint(
-                    serviceId: serviceId,
+                let endpoint = try parseOperation(
                     path: path,
-                    httpMethod: httpMethod,
-                    summary: operation.summary,
-                    description: operation.description,
-                    parameters: parameters,
-                    requestBody: operation.requestBody?.description,
-                    responses: responses,
-                    businessLogic: nil,
-                    plantUMLDiagram: nil,
-                    dependencies: [],
-                    tags: operation.tags?.map { $0.name } ?? []
+                    method: httpMethod,
+                    operation: operationDict,
+                    serviceId: serviceId
                 )
                 
                 endpoints.append(endpoint)
@@ -139,148 +144,250 @@ public struct OpenAPIParser: OpenAPIParserProtocol {
         
         return endpoints
     }
-}
-
-// Модели для парсинга OpenAPI
-private struct OpenAPIDocument: Codable {
-    let openapi: String
-    let info: OpenAPIInfo
-    let servers: [OpenAPIServer]?
-    let paths: [String: OpenAPIPathItem]
-}
-
-private struct OpenAPIInfo: Codable {
-    let title: String
-    let version: String
-    let description: String?
-    let contact: OpenAPIContact?
-}
-
-private struct OpenAPIContact: Codable {
-    let name: String?
-    let email: String?
-    let url: String?
-}
-
-private struct OpenAPIServer: Codable {
-    let url: String
-    let description: String?
-}
-
-private struct OpenAPIPathItem: Codable {
-    let get: OpenAPIOperation?
-    let post: OpenAPIOperation?
-    let put: OpenAPIOperation?
-    let delete: OpenAPIOperation?
-    let patch: OpenAPIOperation?
     
-    var operations: [String: OpenAPIOperation] {
-        var ops: [String: OpenAPIOperation] = [:]
-        if let get = get { ops["get"] = get }
-        if let post = post { ops["post"] = post }
-        if let put = put { ops["put"] = put }
-        if let delete = delete { ops["delete"] = delete }
-        if let patch = patch { ops["patch"] = patch }
-        return ops
-    }
-}
-
-private struct OpenAPIOperation: Codable {
-    let summary: String?
-    let description: String?
-    let parameters: [OpenAPIParameter]?
-    let requestBody: OpenAPIRequestBody?
-    let responses: [String: OpenAPIResponse]
-    let tags: [OpenAPITag]?
-}
-
-private struct OpenAPIParameter: Codable {
-    let name: String
-    let `in`: ParameterLocation
-    let description: String?
-    let required: Bool?
-    let schema: OpenAPISchema?
-    let example: AnyCodable?
-    
-    enum ParameterLocation: String, Codable {
-        case query, header, path, cookie
-    }
-}
-
-private struct OpenAPIRequestBody: Codable {
-    let description: String?
-    let content: [String: OpenAPIMediaType]?
-}
-
-private struct OpenAPIMediaType: Codable {
-    let schema: OpenAPISchema?
-}
-
-private struct OpenAPISchema: Codable {
-    let type: String?
-    let properties: [String: OpenAPISchema]?
-    
-    var description: String? {
-        guard let properties = properties else { return type }
-        return "\(type ?? "object"): \(properties.keys.joined(separator: ", "))"
-    }
-}
-
-private struct OpenAPIResponse: Codable {
-    let description: String?
-    let content: [String: OpenAPIMediaType]?
-}
-
-private struct OpenAPITag: Codable {
-    let name: String
-    let description: String?
-}
-
-private struct AnyCodable: Codable {
-    let value: Any
-    
-    init(_ value: Any) {
-        self.value = value
-    }
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
+    private func parseOperation(path: String,
+                               method: HTTPMethod,
+                               operation: [String: Any],
+                               serviceId: UUID) throws -> APIEndpoint {
         
-        if let string = try? container.decode(String.self) {
-            value = string
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else if let array = try? container.decode([AnyCodable].self) {
-            value = array.map { $0.value }
-        } else if let dictionary = try? container.decode([String: AnyCodable].self) {
-            value = dictionary.mapValues { $0.value }
-        } else {
-            value = NSNull()
+        // Парсим параметры
+        let parameters = parseParameters(operation["parameters"])
+        
+        // Парсим ответы
+        let responses = parseResponses(operation["responses"])
+        
+        // Парсим теги (обрабатываем и строки, и объекты)
+        let tags = parseTags(operation["tags"])
+        
+        // Парсим request body
+        let requestBody = parseRequestBody(operation["requestBody"])
+        
+        return APIEndpoint(
+            serviceId: serviceId,
+            path: path,
+            httpMethod: method,
+            summary: operation["summary"] as? String,
+            description: operation["description"] as? String,
+            parameters: parameters,
+            requestBody: requestBody,
+            responses: responses,
+            businessLogic: nil,
+            plantUMLDiagram: nil,
+            dependencies: [],
+            tags: tags
+        )
+    }
+    
+    private func parseParameters(_ parameters: Any?) -> [APIParameter] {
+        guard let paramsArray = parameters as? [Any] else {
+            return []
+        }
+        
+        return paramsArray.compactMap { param in
+            guard let paramDict = param as? [String: Any],
+                  let name = paramDict["name"] as? String,
+                  let inLocation = paramDict["in"] as? String else {
+                return APIParameter(name: "", type: "", location: .query)
+            }
+            
+            let location: APIParameter.ParameterLocation
+            switch inLocation {
+            case "query": location = .query
+            case "path": location = .path
+            case "header": location = .header
+            case "cookie": location = .cookie
+            default: location = .query
+            }
+            
+            // Получаем тип из схемы
+            let type: String
+            if let schema = paramDict["schema"] as? [String: Any] {
+                type = extractType(from: schema)
+            } else {
+                type = "string"
+            }
+            
+            return APIParameter(
+                name: name,
+                type: type,
+                location: location,
+                required: paramDict["required"] as? Bool ?? false,
+                description: paramDict["description"] as? String,
+                example: (paramDict["example"] as? String) ?? (paramDict["example"] as? Int).map(String.init)
+            )
         }
     }
     
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        
-        switch value {
-        case let string as String:
-            try container.encode(string)
-        case let int as Int:
-            try container.encode(int)
-        case let double as Double:
-            try container.encode(double)
-        case let bool as Bool:
-            try container.encode(bool)
-        case let array as [Any]:
-            try container.encode(array.map(AnyCodable.init))
-        case let dictionary as [String: Any]:
-            try container.encode(dictionary.mapValues(AnyCodable.init))
-        default:
-            try container.encodeNil()
+    private func parseResponses(_ responses: Any?) -> [APIResponse] {
+        guard let responsesDict = responses as? [String: Any] else {
+            return []
         }
+        
+        return responsesDict.compactMap { (code, responseData) -> APIResponse? in
+            guard let responseDict = responseData as? [String: Any] else { return nil }
+            
+            let statusCode = Int(code) ?? 200
+            
+            // Парсим контент
+            var contentType = "application/json"
+            var schema: String? = nil
+            
+            if let content = responseDict["content"] as? [String: Any],
+               let (contentTypeKey, contentValue) = content.first,
+               let contentDict = contentValue as? [String: Any] {
+                
+                contentType = contentTypeKey
+                
+                if let schemaDict = contentDict["schema"] as? [String: Any] {
+                    schema = extractSchemaDescription(from: schemaDict)
+                }
+            }
+            
+            return APIResponse(
+                statusCode: statusCode,
+                description: responseDict["description"] as? String,
+                contentType: contentType,
+                schema: schema
+            )
+        }
+    }
+    
+    private func parseTags(_ tags: Any?) -> [String] {
+        guard let tagsArray = tags as? [Any] else {
+            return []
+        }
+        
+        return tagsArray.compactMap { tag in
+            if let stringTag = tag as? String {
+                return stringTag
+            } else if let dictTag = tag as? [String: Any],
+                      let name = dictTag["name"] as? String {
+                return name
+            }
+            return nil
+        }
+    }
+    
+    private func parseRequestBody(_ requestBody: Any?) -> String? {
+        guard let bodyDict = requestBody as? [String: Any],
+              let content = bodyDict["content"] as? [String: Any],
+              let jsonContent = content["application/json"] as? [String: Any],
+              let schema = jsonContent["schema"] as? [String: Any] else {
+            return nil
+        }
+        
+        return extractSchemaDescription(from: schema)
+    }
+    
+    private func extractType(from schema: [String: Any]) -> String {
+        // Пытаемся получить тип разными способами
+        if let type = schema["type"] as? String {
+            return type
+        }
+        
+        if let ref = schema["$ref"] as? String {
+            return ref.components(separatedBy: "/").last ?? "object"
+        }
+        
+        if let allOf = schema["allOf"] as? [Any], !allOf.isEmpty {
+            return "object" // Сложный объект
+        }
+        
+        if let anyOf = schema["anyOf"] as? [Any], !anyOf.isEmpty {
+            return "any"
+        }
+        
+        return "object"
+    }
+    
+    private func extractSchemaDescription(from schema: [String: Any]) -> String {
+        if let ref = schema["$ref"] as? String {
+            return ref.components(separatedBy: "/").last ?? "object"
+        }
+        
+        if let type = schema["type"] as? String {
+            if type == "array", let items = schema["items"] as? [String: Any] {
+                return "[\(extractSchemaDescription(from: items))]"
+            }
+            return type
+        }
+        
+        if let allOf = schema["allOf"] as? [Any] {
+            let descriptions = allOf.compactMap { item -> String? in
+                guard let dict = item as? [String: Any] else { return nil }
+                return extractSchemaDescription(from: dict)
+            }
+            return "allOf(\(descriptions.joined(separator: ", ")))"
+        }
+        
+        if let anyOf = schema["anyOf"] as? [Any] {
+            let descriptions = anyOf.compactMap { item -> String? in
+                guard let dict = item as? [String: Any] else { return nil }
+                return extractSchemaDescription(from: dict)
+            }
+            return "anyOf(\(descriptions.joined(separator: ", ")))"
+        }
+        
+        return "object"
+    }
+}
+
+// MARK: - Ошибки парсинга
+public enum ParsingError: Error, LocalizedError {
+    case invalidFormat
+    case missingRequiredFields
+    case missingPaths
+    case invalidPathStructure
+    
+    public var errorDescription: String? {
+        switch self {
+        case .invalidFormat:
+            return "Invalid OpenAPI format"
+        case .missingRequiredFields:
+            return "Missing required fields in OpenAPI document"
+        case .missingPaths:
+            return "No paths found in OpenAPI document"
+        case .invalidPathStructure:
+            return "Invalid path structure in OpenAPI document"
+        }
+    }
+}
+
+// MARK: - Поддержка YAML через отдельный парсер
+import Yams
+
+public struct YAMLOpenAPIParser: OpenAPIParserProtocol {
+    private let jsonParser = OpenAPIParser()
+    
+    public init() {}
+    
+    public func parse(from data: Data, format: OpenAPIFormat) throws -> (Service, [APIEndpoint]) {
+        switch format {
+        case .json:
+            return try jsonParser.parse(from: data, format: format)
+        case .yaml:
+            return try parseYAML(from: data)
+        }
+    }
+    
+    public func parse(from fileURL: URL) throws -> (Service, [APIEndpoint]) {
+        let data = try Data(contentsOf: fileURL)
+        let format: OpenAPIFormat = fileURL.pathExtension.lowercased() == "json" ? .json : .yaml
+        return try parse(from: data, format: format)
+    }
+    
+    private func parseYAML(from data: Data) throws -> (Service, [APIEndpoint]) {
+        guard let yamlString = String(data: data, encoding: .utf8) else {
+            throw ParsingError.invalidFormat
+        }
+        
+        // Конвертируем YAML в Dictionary
+        guard let yamlObject = try Yams.load(yaml: yamlString) else {
+            throw ParsingError.invalidFormat
+        }
+        
+        // Конвертируем в JSON данные для единообразной обработки
+        let jsonData = try JSONSerialization.data(withJSONObject: yamlObject)
+        return try jsonParser.parse(from: jsonData, format: .json)
     }
 }

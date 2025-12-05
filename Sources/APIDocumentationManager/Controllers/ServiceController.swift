@@ -23,14 +23,15 @@ public struct ServiceController: RouteCollection {
         // CRUD операций для сервисов
         services.get(use: getAllServices)
         services.post(use: createService)
+        
+        // Импорт/экспорт OpenAPI
+        services.post("import", "openapi", use: importOpenAPI)
+        services.get("export", "openapi", use: exportOpenAPI)
+        
         services.group(":serviceId") { service in
             service.get(use: getService)
             service.put(use: updateService)
             service.delete(use: deleteService)
-            
-            // Импорт/экспорт OpenAPI
-            service.post("import", "openapi", use: importOpenAPI)
-            service.get("export", "openapi", use: exportOpenAPI)
             
             // API endpoints
             service.get("endpoints", use: getServiceEndpoints)

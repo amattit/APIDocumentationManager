@@ -316,9 +316,12 @@ extension ServiceController {
         // Сохраняем модели данных
         for model in dataModels {
             model.$service.id = service.id!
-            
+            for endpoint in endpoints {
+                try await endpoint.$responseModels.load(on: req.db)
+            }
             let endpoint = endpoints.first { point in
-                point.responseModels.contains { cmodel in
+                
+                return point.responseModels.contains { cmodel in
                     cmodel.id == model.id
                 }
             }

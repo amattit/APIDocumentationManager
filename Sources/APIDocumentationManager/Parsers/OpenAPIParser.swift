@@ -253,9 +253,9 @@ public struct OpenAPIParser: OpenAPIParserProtocol {
     }
     
     private func parseTags(_ tags: Any?) -> [String] {
-        guard let tagsArray = tags as? [Any] else {
-            return []
-        }
+        let tagsArray = tags as? [Any] ?? []
+        let tagsArra = tags as? String ?? ""
+//        guard let tagsString = tags as? String
         
         return tagsArray.compactMap { tag in
             if let stringTag = tag as? String {

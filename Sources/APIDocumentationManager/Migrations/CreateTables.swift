@@ -19,7 +19,7 @@ public struct CreateServicesTable: AsyncMigration {
             .field("type", .string, .required)
             .field("department", .string, .required)
             .field("description", .string)
-            .field("environments", .array(of: .custom(ServiceEnvironment.self)))
+            .field("environments", .json)
             .field("owner", .string)
             .field("contact_email", .string)
             .field("created_at", .datetime)

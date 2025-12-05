@@ -9,6 +9,7 @@ import Fluent
 import Vapor
 
 public struct CreateServicesTable: AsyncMigration {
+    public init() {}
     public func prepare(on database: Database) async throws {
         try await database.schema("services")
             .id()

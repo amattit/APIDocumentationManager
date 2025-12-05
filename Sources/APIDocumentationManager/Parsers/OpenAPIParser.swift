@@ -583,7 +583,7 @@ extension OpenAPIParser {
             if let requestBodySchemaRef = endpoint.requestBodySchemaRef {
                 let modelName = extractModelName(from: requestBodySchemaRef)
                 if let model = modelDictionary[modelName] {
-                    endpoint.requestBodyModelId = model.id
+                    endpoint.$requestBodyModel.id = model.id
                 }
             }
             

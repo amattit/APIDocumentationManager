@@ -278,7 +278,7 @@ extension ServiceController {
             // Обновляем ссылки на модели
             if let requestBodySchemaRef = endpoint.requestBodySchemaRef {
                 let modelName = extractModelName(from: requestBodySchemaRef)
-                endpoint.requestBodyModelId = modelDictionary[modelName] as? UUID
+                endpoint.$requestBodyModel.id = modelDictionary[modelName] as? UUID
             }
             
             // Обновляем параметры

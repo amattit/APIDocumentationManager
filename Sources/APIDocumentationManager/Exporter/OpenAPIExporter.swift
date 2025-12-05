@@ -58,7 +58,7 @@ public struct OpenAPIExporter: OpenAPIExporterProtocol {
             
             // Получаем модель request body если есть
             var requestBody: OpenAPIExportRequestBody?
-            if let requestBodyModelId = endpoint.requestBodyModelId,
+            if let requestBodyModelId = endpoint.$requestBodyModel.id,
                let requestBodyModel = try await DataModel.find(requestBodyModelId, on: database) {
                 
                 let schema = try createSchemaFromDataModel(requestBodyModel)

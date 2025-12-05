@@ -145,8 +145,8 @@ public final class APIEndpoint: Model, Content {
     @Field(key: "request_body_schema_ref")
     public var requestBodySchemaRef: String?
     
-    @Field(key: "request_body_model_id")
-    public var requestBodyModelId: UUID?
+//    @Field(key: "request_body_model_id")
+//    public var requestBodyModelId: UUID?
     
     @Field(key: "request_body_description")
     public var requestBodyDescription: String?
@@ -210,7 +210,7 @@ public final class APIEndpoint: Model, Content {
         self.description = description
         self.parameters = parameters
         self.requestBodySchemaRef = requestBodySchemaRef
-        self.requestBodyModelId = requestBodyModelId
+        self.$requestBodyModel.id = requestBodyModelId
         self.requestBodyDescription = requestBodyDescription
         self.requestBodyRequired = requestBodyRequired
         self.responses = responses

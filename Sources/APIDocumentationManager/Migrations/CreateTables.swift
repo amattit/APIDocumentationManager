@@ -45,7 +45,7 @@ public struct CreateAPIEndpointsTable: AsyncMigration {
             .field("description", .string)
             .field("parameters", .array(of: .json))
             .field("request_body_schema_ref", .string)
-            .field("request_body_model_id", .uuid)
+//            .field("request_body_model_id", .uuid)
             .field("request_body_required", .bool)
             .field("request_body_description", .string)
             .field("responses", .array(of: .json))

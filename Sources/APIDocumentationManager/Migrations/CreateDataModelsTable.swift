@@ -25,7 +25,7 @@ public struct CreateDataModelsTable: AsyncMigration {
             .field("examples", .array(of: .json))
             .field("is_reference", .bool, .required)
             .field("referenced_model_name", .string)
-            .field("referenced_model_id", .uuid, .references("data_models", "id", onDelete: .setNull))
+//            .field("referenced_model_id", .uuid, .references("data_models", "id", onDelete: .setNull))
             .field("tags", .array(of: .string))
             .field("created_at", .datetime)
             .field("updated_at", .datetime)

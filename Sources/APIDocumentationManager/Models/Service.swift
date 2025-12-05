@@ -21,7 +21,7 @@ public enum EnvironmentType: String, Codable, Content {
     case testing
 }
 
-public struct ServiceEnvironment: Content, Sendable {
+public struct ServiceEnvironment: Content, Sendable, Codable {
     public let type: EnvironmentType
     public let host: String
     public let baseURL: String

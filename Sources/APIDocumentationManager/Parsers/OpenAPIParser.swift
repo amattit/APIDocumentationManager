@@ -169,7 +169,6 @@ public struct OpenAPIParser: OpenAPIParserProtocol {
             summary: operation["summary"] as? String,
             description: operation["description"] as? String,
             parameters: parameters,
-            requestBody: requestBody,
             responses: responses,
             businessLogic: nil,
             plantUMLDiagram: nil,
@@ -246,8 +245,7 @@ public struct OpenAPIParser: OpenAPIParserProtocol {
             return APIResponse(
                 statusCode: statusCode,
                 description: responseDict["description"] as? String,
-                contentType: contentType,
-                schema: schema
+                contentType: contentType
             )
         }
     }
@@ -389,5 +387,245 @@ public struct YAMLOpenAPIParser: OpenAPIParserProtocol {
         // Конвертируем в JSON данные для единообразной обработки
         let jsonData = try JSONSerialization.data(withJSONObject: yamlObject)
         return try jsonParser.parse(from: jsonData, format: .json)
+    }
+}
+
+extension OpenAPIParser {
+    
+    public func parseWithSchemas(from data: Data, format: OpenAPIFormat) throws -> (Service, [APIEndpoint], [DataModel]) {
+        let jsonObject = try JSONSerialization.jsonObject(with: data)
+        guard let dict = jsonObject as? [String: Any] else {
+            throw ParsingError.invalidFormat
+        }
+        
+        let (service, endpoints) = try parseOpenAPIDocument(from: dict)
+        let dataModels = try parseComponents(from: dict, serviceId: service.id ?? UUID())
+        
+        // Связываем endpoints с моделями
+        let updatedEndpoints = try linkEndpointsWithModels(
+            endpoints: endpoints,
+            dataModels: dataModels,
+            openAPIDict: dict
+        )
+        
+        return (service, updatedEndpoints, dataModels)
+    }
+    
+    private func parseComponents(from dict: [String: Any], serviceId: UUID) throws -> [DataModel] {
+        guard let components = dict["components"] as? [String: Any],
+              let schemas = components["schemas"] as? [String: Any] else {
+            return []
+        }
+        
+        var dataModels: [DataModel] = []
+        
+        for (name, schemaData) in schemas {
+            guard let schemaDict = schemaData as? [String: Any] else { continue }
+            
+            let dataModel = try parseSchema(
+                name: name,
+                schema: schemaDict,
+                serviceId: serviceId,
+                source: "components"
+            )
+            
+            dataModels.append(dataModel)
+        }
+        
+        return dataModels
+    }
+    
+    private func parseSchema(name: String,
+                            schema: [String: Any],
+                            serviceId: UUID,
+                            source: String) throws -> DataModel {
+        
+        let type = schema["type"] as? String ?? "object"
+        let title = schema["title"] as? String
+        let description = schema["description"] as? String
+        
+        // Проверяем если это ссылка
+        if let ref = schema["$ref"] as? String {
+            return DataModel(
+                serviceId: serviceId,
+                name: name,
+                title: title,
+                description: description,
+                type: "reference",
+                isReference: true,
+                referencedModelName: ref.components(separatedBy: "/").last,
+                tags: [],
+                openAPIRef: ref,
+                source: source
+            )
+        }
+        
+        // Парсим свойства
+        var properties: [DataModelProperty] = []
+        var requiredProperties: [String] = []
+        
+        if type == "object", let props = schema["properties"] as? [String: Any] {
+            requiredProperties = schema["required"] as? [String] ?? []
+            
+            for (propName, propData) in props {
+                guard let propDict = propData as? [String: Any] else { continue }
+                
+                let property = parseProperty(name: propName, schema: propDict)
+                properties.append(property)
+            }
+        }
+        
+        // Парсим примеры
+        let examples = parseExamples(from: schema)
+        
+        return DataModel(
+            serviceId: serviceId,
+            name: name,
+            title: title,
+            description: description,
+            type: type,
+            properties: properties,
+            requiredProperties: requiredProperties,
+            examples: examples,
+            isReference: false,
+            tags: [],
+            openAPIRef: nil,
+            source: source
+        )
+    }
+    
+    private func parseProperty(name: String, schema: [String: Any]) -> DataModelProperty {
+        let type = schema["type"] as? String ?? "string"
+        let description = schema["description"] as? String
+        let example = schema["example"] as? String
+        let format = schema["format"] as? String
+        let `enum` = schema["enum"] as? [String]
+        let `default` = schema["default"] as? String
+        
+        var items: [String: String]?
+        if let itemsDict = schema["items"] as? [String: Any] {
+            if let ref = itemsDict["$ref"] as? String {
+                items = ["$ref": ref]
+            } else if let itemType = itemsDict["type"] as? String {
+                items = ["type": itemType]
+            }
+        }
+        
+        return DataModelProperty(
+            name: name,
+            type: type,
+            description: description,
+            required: false, // Это определяется в requiredProperties родителя
+            example: example,
+            format: format,
+            items: items,
+            enum: `enum`,
+            default: `default`
+        )
+    }
+    
+    private func parseExamples(from schema: [String: Any]) -> [DataModelExample] {
+        var examples: [DataModelExample] = []
+        
+        if let examplesDict = schema["examples"] as? [String: Any] {
+            for (name, exampleData) in examplesDict {
+                if let exampleDict = exampleData as? [String: Any],
+                   let valueData = try? JSONSerialization.data(withJSONObject: exampleDict, options: .prettyPrinted),
+                   let value = String(data: valueData, encoding: .utf8) {
+                    
+                    let example = DataModelExample(
+                        name: name,
+                        value: value,
+                        summary: exampleDict["summary"] as? String,
+                        description: exampleDict["description"] as? String
+                    )
+                    examples.append(example)
+                }
+            }
+        }
+        
+        // Также проверяем example на верхнем уровне
+        if let exampleData = schema["example"] {
+            if let exampleDict = exampleData as? [String: Any],
+               let valueData = try? JSONSerialization.data(withJSONObject: exampleDict, options: .prettyPrinted),
+               let value = String(data: valueData, encoding: .utf8) {
+                
+                let example = DataModelExample(
+                    name: "default",
+                    value: value
+                )
+                examples.append(example)
+            } else if let exampleString = exampleData as? String {
+                let example = DataModelExample(
+                    name: "default",
+                    value: exampleString
+                )
+                examples.append(example)
+            }
+        }
+        
+        return examples
+    }
+    
+    private func linkEndpointsWithModels(endpoints: [APIEndpoint],
+                                        dataModels: [DataModel],
+                                        openAPIDict: [String: Any]) throws -> [APIEndpoint] {
+        
+        var modelDictionary: [String: DataModel] = [:]
+        for model in dataModels {
+            modelDictionary[model.name] = model
+        }
+        
+        var updatedEndpoints: [APIEndpoint] = []
+        
+        for endpoint in endpoints {
+            // Связываем request body
+            if let requestBodySchemaRef = endpoint.requestBodySchemaRef {
+                let modelName = extractModelName(from: requestBodySchemaRef)
+                if let model = modelDictionary[modelName] {
+                    endpoint.requestBodyModelId = model.id
+                }
+            }
+            
+            // Связываем параметры
+            var updatedParameters: [APIParameter] = []
+            for param in endpoint.parameters {
+                if let schemaRef = param.schemaRef {
+                    let modelName = extractModelName(from: schemaRef)
+                    if let model = modelDictionary[modelName] {
+                        var updatedParam = param
+                        updatedParam.dataModelId = model.id
+                        updatedParameters.append(updatedParam)
+                        continue
+                    }
+                }
+                updatedParameters.append(param)
+            }
+            endpoint.parameters = updatedParameters
+            
+            // Связываем ответы
+            var updatedResponses: [APIResponse] = []
+            for response in endpoint.responses {
+                if let schemaRef = response.schemaRef {
+                    let modelName = extractModelName(from: schemaRef)
+                    if let model = modelDictionary[modelName] {
+                        var updatedResponse = response
+                        updatedResponse.dataModelId = model.id
+                        updatedResponses.append(updatedResponse)
+                        continue
+                    }
+                }
+                updatedResponses.append(response)
+            }
+            endpoint.responses = updatedResponses
+            
+            updatedEndpoints.append(endpoint)
+        }
+        
+        return updatedEndpoints
+    }
+    
+    private func extractModelName(from ref: String) -> String {
+        return ref.components(separatedBy: "/").last ?? ref
     }
 }

@@ -6,13 +6,14 @@
 //
 
 import Vapor
+import Fluent
 
 public struct ServiceController: RouteCollection {
     private let openAPIParser: OpenAPIParserProtocol
     private let openAPIExporter: OpenAPIExporterProtocol
     
     public init(openAPIParser: OpenAPIParserProtocol = OpenAPIParser(),
-                openAPIExporter: OpenAPIExporterProtocol = OpenAPIExporter()) {
+                openAPIExporter: OpenAPIExporterProtocol) {
         self.openAPIParser = openAPIParser
         self.openAPIExporter = openAPIExporter
     }
@@ -25,7 +26,7 @@ public struct ServiceController: RouteCollection {
         services.post(use: createService)
         
         // Импорт/экспорт OpenAPI
-        services.post("import", "openapi", use: importOpenAPI)
+        services.post("import", "openapi", use: importOpenAPIWithSchemas)
         services.get("export", "openapi", use: exportOpenAPI)
         
         services.group(":serviceId") { service in
@@ -118,29 +119,29 @@ public struct ServiceController: RouteCollection {
         let importedCount: Int
     }
     
-    private func importOpenAPI(req: Request) async throws -> ImportResponse {
-        
-        
-        let importRequest = try req.content.decode(ImportRequest.self)
-        let fileURL = URL(string: importRequest.fileURL)!
-        
-        let (service, endpoints) = try openAPIParser.parse(from: fileURL)
-        
-        // Сохраняем сервис
-        try await service.save(on: req.db)
-        
-        // Сохраняем endpoints
-        for endpoint in endpoints {
-            endpoint.$service.id = service.id!
-            try await endpoint.save(on: req.db)
-        }
-        
-        return ImportResponse(
-            service: service,
-            endpoints: endpoints,
-            importedCount: endpoints.count
-        )
-    }
+//    private func importOpenAPI(req: Request) async throws -> ImportResponse {
+//        
+//        
+//        let importRequest = try req.content.decode(ImportRequest.self)
+//        let fileURL = URL(string: importRequest.fileURL)!
+//        
+//        let (service, endpoints) = try openAPIParser.parse(from: fileURL)
+//        
+//        // Сохраняем сервис
+//        try await service.save(on: req.db)
+//        
+//        // Сохраняем endpoints
+//        for endpoint in endpoints {
+//            endpoint.$service.id = service.id!
+//            try await endpoint.save(on: req.db)
+//        }
+//        
+//        return ImportResponse(
+//            service: service,
+//            endpoints: endpoints,
+//            importedCount: endpoints.count
+//        )
+    //    }
     
     private func exportOpenAPI(req: Request) async throws -> Response {
         guard let serviceId = req.parameters.get("serviceId", as: UUID.self) else {
@@ -157,13 +158,14 @@ public struct ServiceController: RouteCollection {
         
         let format = req.query["format"] == "yaml" ? OpenAPIFormat.yaml : .json
         
-        let fileURL = try openAPIExporter.generateOpenAPIFile(
+        let exporter = OpenAPIExporter(database: req.db)
+        let fileURL = try await exporter.generateOpenAPIFile(
             service: service,
             endpoints: endpoints,
             format: format
         )
-        return try await req.fileio.asyncStreamFile(at: fileURL.path())
-//        return req.fileio.streamFile(at: fileURL.path)
+        
+        return req.fileio.streamFile(at: fileURL.path)
     }
     
     // MARK: - Endpoints Management
@@ -234,5 +236,99 @@ public struct ServiceController: RouteCollection {
             from: chainRequest.fromServiceId,
             to: chainRequest.toServiceId
         )
+    }
+}
+
+struct ImportRequest: Content {
+    let fileURL: String
+}
+
+struct ImportWithSchemasResponse: Content {
+    let service: Service
+    let endpoints: [APIEndpoint]
+    let dataModels: [DataModel]
+    let importedEndpointsCount: Int
+    let importedModelsCount: Int
+}
+
+extension ServiceController {
+    private func importOpenAPIWithSchemas(req: Request) async throws -> ImportWithSchemasResponse {
+        
+        
+        let importRequest = try req.content.decode(ImportRequest.self)
+        let fileURL = URL(string: importRequest.fileURL)!
+        
+        let data = try Data(contentsOf: fileURL)
+        let format: OpenAPIFormat = fileURL.pathExtension.lowercased() == "json" ? .json : .yaml
+        
+        let parser = OpenAPIParser()
+        let (service, endpoints, dataModels) = try parser.parseWithSchemas(from: data, format: format)
+        
+        // Сохраняем сервис
+        try await service.save(on: req.db)
+        
+        // Сохраняем модели данных
+        for model in dataModels {
+            model.$service.id = service.id!
+            try await model.save(on: req.db)
+        }
+        
+        // Обновляем ID моделей в endpoints (чтобы ссылки были корректными)
+        let modelDictionary = Dictionary(uniqueKeysWithValues: dataModels.map { ($0.name, $0.id) })
+        
+        // Сохраняем endpoints с обновленными ссылками на модели
+        var savedEndpoints: [APIEndpoint] = []
+        for endpoint in endpoints {
+            endpoint.$service.id = service.id!
+            
+            // Обновляем ссылки на модели
+            if let requestBodySchemaRef = endpoint.requestBodySchemaRef {
+                let modelName = extractModelName(from: requestBodySchemaRef)
+                endpoint.requestBodyModelId = modelDictionary[modelName] as? UUID
+            }
+            
+            // Обновляем параметры
+            var updatedParameters: [APIParameter] = []
+            for param in endpoint.parameters {
+                if let schemaRef = param.schemaRef {
+                    let modelName = extractModelName(from: schemaRef)
+                    var updatedParam = param
+                    updatedParam.dataModelId = modelDictionary[modelName] as? UUID
+                    updatedParameters.append(updatedParam)
+                } else {
+                    updatedParameters.append(param)
+                }
+            }
+            endpoint.parameters = updatedParameters
+            
+            // Обновляем ответы
+            var updatedResponses: [APIResponse] = []
+            for response in endpoint.responses {
+                if let schemaRef = response.schemaRef {
+                    let modelName = extractModelName(from: schemaRef)
+                    var updatedResponse = response
+                    updatedResponse.dataModelId = modelDictionary[modelName] as? UUID
+                    updatedResponses.append(updatedResponse)
+                } else {
+                    updatedResponses.append(response)
+                }
+            }
+            endpoint.responses = updatedResponses
+            
+            try await endpoint.save(on: req.db)
+            savedEndpoints.append(endpoint)
+        }
+        
+        return ImportWithSchemasResponse(
+            service: service,
+            endpoints: savedEndpoints,
+            dataModels: dataModels,
+            importedEndpointsCount: savedEndpoints.count,
+            importedModelsCount: dataModels.count
+        )
+    }
+    
+    private func extractModelName(from ref: String) -> String {
+        return ref.components(separatedBy: "/").last ?? ref
     }
 }

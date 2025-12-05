@@ -18,56 +18,6 @@ public enum HTTPMethod: String, Codable, Content {
     case options = "OPTIONS"
 }
 
-public struct APIParameter: Content {
-    public let name: String
-    public let type: String
-    public let location: ParameterLocation
-    public let required: Bool
-    public let description: String?
-    public let example: String?
-    
-    public enum ParameterLocation: String, Codable, Content {
-        case query
-        case path
-        case header
-        case cookie
-    }
-    
-    public init(name: String,
-                type: String,
-                location: ParameterLocation,
-                required: Bool = false,
-                description: String? = nil,
-                example: String? = nil) {
-        self.name = name
-        self.type = type
-        self.location = location
-        self.required = required
-        self.description = description
-        self.example = example
-    }
-}
-
-public struct APIResponse: Content {
-    public let statusCode: Int
-    public let description: String?
-    public let contentType: String
-    public let schema: String?
-    public let examples: [String: String]?
-    
-    public init(statusCode: Int,
-                description: String? = nil,
-                contentType: String = "application/json",
-                schema: String? = nil,
-                examples: [String: String]? = nil) {
-        self.statusCode = statusCode
-        self.description = description
-        self.contentType = contentType
-        self.schema = schema
-        self.examples = examples
-    }
-}
-
 public struct APICallDependency: Content {
     public let serviceId: UUID?
     public let serviceName: String
@@ -91,6 +41,82 @@ public struct APICallDependency: Content {
     }
 }
 
+import Vapor
+import Fluent
+
+public struct APIResponse: Content {
+    public let statusCode: Int
+    public let description: String?
+    public let contentType: String
+    public let schemaRef: String? // $ref на схему
+    public let schemaType: String? // inline schema type
+    public var dataModelId: UUID? // ID связанной модели данных
+    public let examples: [String: String]?
+    public let headers: [String: String]?
+    
+    public init(statusCode: Int,
+                description: String? = nil,
+                contentType: String = "application/json",
+                schemaRef: String? = nil,
+                schemaType: String? = nil,
+                dataModelId: UUID? = nil,
+                examples: [String: String]? = nil,
+                headers: [String: String]? = nil) {
+        self.statusCode = statusCode
+        self.description = description
+        self.contentType = contentType
+        self.schemaRef = schemaRef
+        self.schemaType = schemaType
+        self.dataModelId = dataModelId
+        self.examples = examples
+        self.headers = headers
+    }
+    
+    // Вспомогательное свойство для получения имени модели из $ref
+    public var schemaModelName: String? {
+        guard let ref = schemaRef else { return nil }
+        return ref.components(separatedBy: "/").last
+    }
+}
+
+// Также обновляем APIParameter для поддержки схем
+public struct APIParameter: Content {
+    public let name: String
+    public let type: String
+    public let location: ParameterLocation
+    public let required: Bool
+    public let description: String?
+    public let example: String?
+    public let schemaRef: String? // $ref на схему
+    public var dataModelId: UUID? // ID связанной модели данных
+    
+    public enum ParameterLocation: String, Codable, Content {
+        case query
+        case path
+        case header
+        case cookie
+    }
+    
+    public init(name: String,
+                type: String,
+                location: ParameterLocation,
+                required: Bool = false,
+                description: String? = nil,
+                example: String? = nil,
+                schemaRef: String? = nil,
+                dataModelId: UUID? = nil) {
+        self.name = name
+        self.type = type
+        self.location = location
+        self.required = required
+        self.description = description
+        self.example = example
+        self.schemaRef = schemaRef
+        self.dataModelId = dataModelId
+    }
+}
+
+// Обновляем APIEndpoint для хранения информации о request body модели
 public final class APIEndpoint: Model, Content {
     public static let schema = "api_endpoints"
     
@@ -115,8 +141,18 @@ public final class APIEndpoint: Model, Content {
     @Field(key: "parameters")
     public var parameters: [APIParameter]
     
-    @Field(key: "request_body")
-    public var requestBody: String?
+    // Добавляем поля для связи с моделями данных
+    @Field(key: "request_body_schema_ref")
+    public var requestBodySchemaRef: String?
+    
+    @Field(key: "request_body_model_id")
+    public var requestBodyModelId: UUID?
+    
+    @Field(key: "request_body_description")
+    public var requestBodyDescription: String?
+    
+    @Field(key: "request_body_required")
+    public var requestBodyRequired: Bool
     
     @Field(key: "responses")
     public var responses: [APIResponse]
@@ -139,7 +175,16 @@ public final class APIEndpoint: Model, Content {
     @Timestamp(key: "updated_at", on: .update)
     public var updatedAt: Date?
     
-    public init() { }
+    // Relationships
+    @OptionalParent(key: "request_body_model_id")
+    public var requestBodyModel: DataModel?
+    
+    @Children(for: \.$endpoint)
+    public var responseModels: [DataModel]
+    
+    public init() {
+        self.requestBodyRequired = false
+    }
     
     public init(id: UUID? = nil,
                 serviceId: UUID,
@@ -148,7 +193,10 @@ public final class APIEndpoint: Model, Content {
                 summary: String? = nil,
                 description: String? = nil,
                 parameters: [APIParameter] = [],
-                requestBody: String? = nil,
+                requestBodySchemaRef: String? = nil,
+                requestBodyModelId: UUID? = nil,
+                requestBodyDescription: String? = nil,
+                requestBodyRequired: Bool = false,
                 responses: [APIResponse] = [],
                 businessLogic: String? = nil,
                 plantUMLDiagram: String? = nil,
@@ -161,7 +209,10 @@ public final class APIEndpoint: Model, Content {
         self.summary = summary
         self.description = description
         self.parameters = parameters
-        self.requestBody = requestBody
+        self.requestBodySchemaRef = requestBodySchemaRef
+        self.requestBodyModelId = requestBodyModelId
+        self.requestBodyDescription = requestBodyDescription
+        self.requestBodyRequired = requestBodyRequired
         self.responses = responses
         self.businessLogic = businessLogic
         self.plantUMLDiagram = plantUMLDiagram

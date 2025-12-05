@@ -8,10 +8,8 @@
 import Fluent
 import Vapor
 
-public struct CreateServicesTable: AsyncMigration {
-    public init() {}
-    
-    public func prepare(on database: Database) async throws {
+struct CreateServicesTable: AsyncMigration {
+    func prepare(on database: Database) async throws {
         try await database.schema("services")
             .id()
             .field("name", .string, .required)
@@ -19,7 +17,7 @@ public struct CreateServicesTable: AsyncMigration {
             .field("type", .string, .required)
             .field("department", .string, .required)
             .field("description", .string)
-            .field("environments", .json)
+            .field("environments_group", .json) // Для @Group
             .field("owner", .string)
             .field("contact_email", .string)
             .field("created_at", .datetime)
@@ -28,7 +26,7 @@ public struct CreateServicesTable: AsyncMigration {
             .create()
     }
     
-    public func revert(on database: Database) async throws {
+    func revert(on database: Database) async throws {
         try await database.schema("services").delete()
     }
 }

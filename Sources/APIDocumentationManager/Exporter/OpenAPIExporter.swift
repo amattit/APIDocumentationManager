@@ -106,7 +106,7 @@ public struct OpenAPIExporter: OpenAPIExporterProtocol {
             paths[endpoint.path] = pathItem
         }
         
-        let servers = service.environments.map { env in
+        let servers = service.environments.array.map { env in
             OpenAPIExportServer(url: env.baseURL, description: env.description)
         }
         

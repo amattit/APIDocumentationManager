@@ -60,8 +60,8 @@ public final class Service: Model, Content, Sendable {
     @Field(key: "description")
     public var description: String?
     
-    @Field(key: "environments")
-    public var environments: [ServiceEnvironment]
+    @Group(key: "environments_group")
+    public var environments: ServiceEnvironments
     
     @Field(key: "owner")
     public var owner: String?
@@ -78,7 +78,9 @@ public final class Service: Model, Content, Sendable {
     @Children(for: \.$service)
     public var apiEndpoints: [APIEndpoint]
     
-    public init() { }
+    public init() {
+        self.environments = ServiceEnvironments()
+    }
     
     public init(id: UUID? = nil,
                 name: String,
@@ -95,8 +97,18 @@ public final class Service: Model, Content, Sendable {
         self.type = type
         self.department = department
         self.description = description
-        self.environments = environments
         self.owner = owner
         self.contactEmail = contactEmail
+        self.environments = ServiceEnvironments()
+        self.environments.array = environments
+    }
+}
+
+public final class ServiceEnvironments: Fields {
+    @Field(key: "array")
+    public var array: [ServiceEnvironment]
+    
+    public init() {
+        self.array = []
     }
 }

@@ -179,8 +179,8 @@ public final class APIEndpoint: Model, Content {
     @OptionalParent(key: "request_body_model_id")
     public var requestBodyModel: DataModel?
     
-    @Children(for: \.$endpoint)
-    public var responseModels: [DataModel]
+//    @Children(for: \.$endpoint)
+//    public var responseModels: [DataModel]
     
     public init() {
         self.requestBodyRequired = false

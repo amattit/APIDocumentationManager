@@ -270,7 +270,7 @@ extension ServiceController {
         // Сохраняем модели данных
         for model in dataModels {
             model.$service.id = service.id!
-            model.$endpoint.id = UUID()
+//            model.$endpoint.id = UUID()
             try await model.save(on: req.db)
         }
         

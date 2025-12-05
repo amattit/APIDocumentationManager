@@ -59,8 +59,8 @@ public final class DataModel: Model, Content {
     @Parent(key: "service_id")
     public var service: Service
     
-    @Parent(key: "endpoint_id")
-    public var endpoint: APIEndpoint
+//    @Parent(key: "endpoint_id")
+//    public var endpoint: APIEndpoint
     
     @Field(key: "name")
     public var name: String

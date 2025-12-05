@@ -103,23 +103,24 @@ public struct DataModelController: RouteCollection {
             throw Abort(.notFound, reason: "Endpoint not found")
         }
         
-        return try await endpoint.$responseModels.get(on: req.db)
+//        return try await endpoint.$responseModels.get(on: req.db)
         // Собираем ID моделей из ответов
-//        var modelIds: [UUID] = []
-//        for response in endpoint.responses {
-//            if let modelId = response.dataModelId {
-//                modelIds.append(modelId)
-//            }
-//        }
-//        
-//        if modelIds.isEmpty {
-//            return []
-//        }
-//        
-//        // Получаем модели по ID
-//        return try await DataModel.query(on: req.db)
+        var modelIds: [UUID] = []
+        for response in endpoint.responses {
+            if let modelId = response.dataModelId {
+                modelIds.append(modelId)
+            }
+        }
+        
+        if modelIds.isEmpty {
+            return []
+        }
+        
+        // Получаем модели по ID
+        return try await DataModel.query(on: req.db)
 //            .filter(\.$id, .subset(inverse: false), modelIds)
-//            .all()
+            .filter(\.$id, .equal, modelIds.first!)
+            .all()
     }
     
     struct EndpointModelsResponse: Content {

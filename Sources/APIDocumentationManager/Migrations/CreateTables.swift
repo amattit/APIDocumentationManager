@@ -18,7 +18,7 @@ public struct CreateServicesTable: AsyncMigration {
             .field("type", .string, .required)
             .field("department", .string, .required)
             .field("description", .string)
-            .field("environments_group", .json) // Для @Group
+            .field("environments", .json) // Для @Group
             .field("owner", .string)
             .field("contact_email", .string)
             .field("created_at", .datetime)

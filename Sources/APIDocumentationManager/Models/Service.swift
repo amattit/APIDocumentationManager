@@ -60,7 +60,8 @@ public final class Service: Model, Content, Sendable {
     @Field(key: "description")
     public var description: String?
     
-    @Group(key: "environments_group")
+    // Используем @Group правильно
+    @Group(key: "environments")
     public var environments: ServiceEnvironments
     
     @Field(key: "owner")
@@ -100,15 +101,22 @@ public final class Service: Model, Content, Sendable {
         self.owner = owner
         self.contactEmail = contactEmail
         self.environments = ServiceEnvironments()
-        self.environments.array = environments
+        self.environments.list = environments
+    }
+    
+    // Вспомогательное computed property для удобства
+    public var environmentsList: [ServiceEnvironment] {
+        get { environments.list }
+        set { environments.list = newValue }
     }
 }
 
+// Группа для хранения массива окружений
 public final class ServiceEnvironments: Fields {
-    @Field(key: "array")
-    public var array: [ServiceEnvironment]
+    @Field(key: "list")
+    public var list: [ServiceEnvironment]
     
     public init() {
-        self.array = []
+        self.list = []
     }
 }

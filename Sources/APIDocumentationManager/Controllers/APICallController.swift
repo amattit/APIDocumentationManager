@@ -150,4 +150,39 @@ struct APICallController: RouteCollection {
             .with(\.$schemaModel)
             .all()
     }
+    
+    func linkSchemaWithResponse(req: Request) async throws -> APIResponseModel {
+        let input = try req.content.decode(LinkResponseSchemaDTO.self)
+        guard let schema = try await SchemaModel.query(on: req.db).filter(\.$id == input.schemaID).first()
+        else {
+            throw Abort(.notFound, reason: "schema not found")
+        }
+        
+        guard let response = try await APIResponseModel.query(on: req.db).filter(\.$id == input.responseID).first()
+        else {
+            throw Abort(.notFound, reason: "response not found")
+        }
+        schema.$response.id = input.responseID
+        try await schema.save(on: req.db)
+        
+        try await response.$schemaModel.load(on: req.db)
+        return response
+    }
+    
+    func linkSchemaRequestWithAPI(req: Request) async throws -> APICallModel {
+        let input = try req.content.decode(LinkAPISchemaDTO.self)
+        guard let schema = try await SchemaModel.query(on: req.db).filter(\.$id == input.schemaID).first()
+        else {
+            throw Abort(.notFound, reason: "schema not found")
+        }
+        
+        guard let apiCall = try await APICallModel.query(on: req.db).filter(\.$id == input.apiCallId).first()
+        else {
+            throw Abort(.notFound, reason: "response not found")
+        }
+        schema.$apiCall.id = input.apiCallId
+        try await schema.save(on: req.db)
+        try await apiCall.$requestModel.load(on: req.db)
+        return apiCall
+    }
 }

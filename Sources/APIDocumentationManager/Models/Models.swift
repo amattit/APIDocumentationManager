@@ -272,6 +272,7 @@ public final class SchemaModel: Model, Content, Sendable {
     @Children(for: \.$schema)
     public var attributes: [SchemaAttributeModel]
     
+    // запрос для вызова
     @OptionalParent(key: "api_call_id")
     public var apiCall: APICallModel?
     

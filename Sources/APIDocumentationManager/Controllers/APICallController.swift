@@ -10,6 +10,9 @@ struct APICallController: RouteCollection {
         // CRUD маршруты
         apiCalls.get(use: getAll)
         apiCalls.get(":id", use: getById)
+        apiCalls.post(":id", use: createResponse)
+        apiCalls.post("responses", ":responseID", use: createResponse)
+        apiCalls.delete("responses", ":responseID", use: deleteResponse)
         apiCalls.post("link-schema-response", use: linkSchemaWithResponse)
         apiCalls.post("link-schema-request", use: linkSchemaRequestWithAPI)
         serviceCalls.post(use: create)
@@ -67,6 +70,65 @@ struct APICallController: RouteCollection {
         
         try await apiCall.save(on: req.db)
         return apiCall
+    }
+    
+    func createResponse(req: Request) async throws -> APIResponseModel {
+        guard let apiCallID = req.parameters.get("id", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        let input = try req.content.decode(CreateResponseDTO.self)
+        
+        let response = APIResponseModel(
+            statusCode: input.statusCode,
+            description: input.description,
+            contentType: input.contentType, 
+            examples: input.examples,
+            headers: input.headers,
+            apiCallID: apiCallID
+        )
+        
+        try await response.save(on: req.db)
+        return response
+    }
+    
+    func updateResponse(req: Request) async throws -> APIResponseModel {
+        guard let responseID = req.parameters.get(":responseID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        let input = try req.content.decode(UpdateResponseDTO.self)
+        
+        guard let response = try await APIResponseModel.query(on: req.db)
+            .filter(\.$id == responseID)
+            .first()
+        else {
+            throw Abort(.notFound, reason: "response not found")
+        }
+        
+        response.statusCode = input.statusCode ?? response.statusCode
+        response.description = input.description ?? response.description
+        response.contentType = input.contentType ?? response.contentType
+        response.examples = input.examples ?? response.examples
+        response.headers = input.headers ?? response.headers
+        
+        try await response.save(on: req.db)
+        return response
+    }
+    
+    func deleteResponse(req: Request) async throws -> HTTPStatus {
+        guard let responseID = req.parameters.get(":responseID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        
+        guard let response = try await APIResponseModel.query(on: req.db)
+            .filter(\.$id == responseID)
+            .first()
+        else {
+            throw Abort(.notFound, reason: "response not found")
+        }
+        
+        try await response.delete(on: req.db)
+        
+        return .noContent
     }
     
     // Обновить API вызов

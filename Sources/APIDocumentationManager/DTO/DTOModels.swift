@@ -83,3 +83,19 @@ public struct LinkResponseSchemaDTO: Content, Sendable {
     let responseID: UUID
     let schemaID: UUID
 }
+
+public struct CreateResponseDTO: Content, Sendable {
+    let statusCode: Int
+    let description: String?
+    let contentType: String
+    let examples: [String: String]?
+    let headers: [String: String]?
+}
+
+public struct UpdateResponseDTO: Content, Sendable {
+    let statusCode: Int?
+    let description: String?
+    let contentType: String?
+    let examples: [String: String]?
+    let headers: [String: String]?
+}

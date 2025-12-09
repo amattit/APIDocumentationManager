@@ -26,7 +26,8 @@ public struct APIDocumentationConfiguration {
             collections: [
                 APICallController(),
                 SchemaController(),
-                ServiceController()
+                ServiceController(),
+                OpenAPIImportController()
             ]
         )
     }

@@ -40,7 +40,7 @@ public struct APIDocumentationConfiguration {
     }
 }
 
-public struct DBDocumentationKit {
+public struct APIDocumentationKit {
     public static func configure(
         _ app: Application,
         configuration: APIDocumentationConfiguration = .default

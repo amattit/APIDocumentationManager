@@ -10,11 +10,13 @@ struct APICallController: RouteCollection {
         // CRUD маршруты
         apiCalls.get(use: getAll)
         apiCalls.get(":id", use: getById)
+        // CUD responses
         apiCalls.post(":id", "responses", use: createResponse)
         apiCalls.post("responses", ":responseID", use: updateResponse)
         apiCalls.delete("responses", ":responseID", use: deleteResponse)
         apiCalls.post("link-schema-response", use: linkSchemaWithResponse)
         apiCalls.post("link-schema-request", use: linkSchemaRequestWithAPI)
+        
         serviceCalls.post(use: create)
         serviceCalls.put(":id", use: update)
         serviceCalls.delete(":id", use: delete)
@@ -34,7 +36,7 @@ struct APICallController: RouteCollection {
                     $0.with(\.$attributes)
                 })
             })
-            .with(\.$requestModel)
+            .with(\.$requestModel, { $0.with(\.$attributes) })
             .all()
     }
     

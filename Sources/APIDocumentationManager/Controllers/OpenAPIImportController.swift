@@ -2,6 +2,7 @@
 import Vapor
 import OpenAPIKit
 import Yams
+import Fluent
 
 struct OpenAPIImportController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
@@ -14,51 +15,50 @@ struct OpenAPIImportController: RouteCollection {
         let input = try req.content.decode(ImportOpenAPIRequest.self)
         
         // Загружаем OpenAPI спецификацию
-        let document: OpenAPI.Document
-        do {
-            document = try await loadOpenAPIDocument(from: input.url, req: req)
-        } catch {
-            throw Abort(.badRequest, reason: "Не удалось загрузить OpenAPI спецификацию: \(error)")
-        }
+        let document = try await loadOpenAPIDocument(from: input.url, req: req)
         
         // Извлекаем информацию о сервисе
         let serviceInfo = extractServiceInfo(from: document.info)
         
-        // Создаем или обновляем сервис
-        let service = try await createOrUpdateService(
-            info: serviceInfo,
-            on: req
-        )
-        
-        var importStats = ImportStats()
-        
-        // Импортируем схемы из components
-        let schemaMap = try await importSchemas(
-            from: document.components.schemas,
-            on: req
-        )
-        
-        // Импортируем API вызовы
-        for (path, pathItem) in document.paths {
-            try await importPath(
-                path: path.rawValue,
-                pathItem: pathItem.pathItemValue!,
-                service: service,
-                components: document.components,
-                schemaMap: schemaMap,
-                on: req,
-                stats: &importStats
+        return try await req.db.transaction { transaction in
+            // Создаем или обновляем сервис
+            let service = try await createOrUpdateService(
+                info: serviceInfo,
+                on: transaction
+            )
+            
+            var importStats = ImportStats()
+            
+            // Импортируем схемы из components
+            let schemaMap = try await importSchemas(
+                from: document.components.schemas ?? [:],
+                on: transaction
+            )
+            
+            // Импортируем API вызовы
+            for (path, pathItem) in document.paths {
+                guard let pathItemValue = pathItem.pathItemValue else { continue }
+                
+                try await importPath(
+                    path: path.rawValue,
+                    pathItem: pathItemValue,
+                    service: service,
+                    components: document.components,
+                    schemaMap: schemaMap,
+                    on: transaction,
+                    stats: &importStats
+                )
+            }
+            
+            return ImportResultDTO(
+                serviceName: service.name,
+                serviceVersion: service.version,
+                importedEndpoints: importStats.importedEndpoints,
+                importedSchemas: importStats.importedSchemas,
+                importedParameters: importStats.importedParameters,
+                importedResponses: importStats.importedResponses
             )
         }
-        
-        return ImportResultDTO(
-            serviceName: service.name,
-            serviceVersion: service.version,
-            importedEndpoints: importStats.importedEndpoints,
-            importedSchemas: importStats.importedSchemas,
-            importedParameters: importStats.importedParameters,
-            importedResponses: importStats.importedResponses
-        )
     }
     
     // MARK: - Вспомогательные методы
@@ -69,9 +69,23 @@ struct OpenAPIImportController: RouteCollection {
         }
         
         // Загружаем содержимое спецификации
-        let response = try await req.client.get(URI(string: url.absoluteString))
+        let response: ClientResponse
+        if url.scheme == "file" || url.isFileURL {
+            // Локальный файл
+            let filePath = url.absoluteString.replacingOccurrences(of: "file://", with: "")
+            guard FileManager.default.fileExists(atPath: filePath) else {
+                throw Abort(.badRequest, reason: "Файл не найден")
+            }
+            let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
+            let body = ByteBuffer(data: data)
+            response = ClientResponse(status: .ok, body: body)
+        } else {
+            // Удаленный URL
+            response = try await req.client.get(URI(string: url.absoluteString))
+        }
+        
         guard response.status == .ok else {
-            throw Abort(.badRequest, reason: "Не удалось загрузить файл")
+            throw Abort(.badRequest, reason: "Не удалось загрузить файл. Статус: \(response.status)")
         }
         
         guard let body = response.body else {
@@ -81,13 +95,26 @@ struct OpenAPIImportController: RouteCollection {
         let data = Data(buffer: body)
         
         // Определяем формат (JSON или YAML)
+        if let contentType = response.headers.first(name: "Content-Type") {
+            if contentType.contains("json") {
+                return try JSONDecoder().decode(OpenAPI.Document.self, from: data)
+            } else if contentType.contains("yaml") || contentType.contains("yml") {
+                let yamlString = String(data: data, encoding: .utf8) ?? ""
+                return try YAMLDecoder().decode(OpenAPI.Document.self, from: yamlString)
+            }
+        }
+        
+        // Определяем по расширению или содержимому
         let isJSON = url.pathExtension.lowercased() == "json" ||
-                     (data.first == 0x7B) // Проверяем первый байт на '{' для JSON
+                     data.first == 0x7B || // '{' для JSON
+                     data.first == 0x5B     // '[' для JSON массива
         
         if isJSON {
             return try JSONDecoder().decode(OpenAPI.Document.self, from: data)
         } else {
-            let yamlString = String(data: data, encoding: .utf8) ?? ""
+            guard let yamlString = String(data: data, encoding: .utf8) else {
+                throw Abort(.badRequest, reason: "Невозможно декодировать содержимое как текст")
+            }
             return try YAMLDecoder().decode(OpenAPI.Document.self, from: yamlString)
         }
     }
@@ -101,15 +128,16 @@ struct OpenAPIImportController: RouteCollection {
         )
     }
     
-    private func createOrUpdateService(info: ServiceInfo, on req: Request) async throws -> ServiceModel {
+    private func createOrUpdateService(info: ServiceInfo, on database: Database) async throws -> ServiceModel {
         // Проверяем существование сервиса
-        if let existingService = try await ServiceModel.query(on: req.db)
+        if let existingService = try await ServiceModel.query(on: database)
             .filter(\.$name, .equal, info.name)
             .filter(\.$version, .equal, info.version)
             .first() {
             // Обновляем существующий сервис
             existingService.description = info.description
-            try await existingService.save(on: req.db)
+            existingService.owner = info.owner
+            try await existingService.update(on: database)
             return existingService
         } else {
             // Создаем новый сервис
@@ -120,14 +148,14 @@ struct OpenAPIImportController: RouteCollection {
                 owner: info.owner,
                 description: info.description
             )
-            try await service.save(on: req.db)
+            try await service.create(on: database)
             return service
         }
     }
     
     private func importSchemas(
         from schemas: OpenAPI.ComponentDictionary<JSONSchema>,
-        on req: Request
+        on database: Database
     ) async throws -> [String: SchemaModel] {
         var schemaMap: [String: SchemaModel] = [:]
         
@@ -135,7 +163,7 @@ struct OpenAPIImportController: RouteCollection {
             let schemaModel = try await importSchema(
                 name: schemaName.rawValue,
                 schema: schema,
-                on: req
+                on: database
             )
             schemaMap[schemaName.rawValue] = schemaModel
         }
@@ -146,18 +174,20 @@ struct OpenAPIImportController: RouteCollection {
     private func importSchema(
         name: String,
         schema: JSONSchema,
-        on req: Request
+        on database: Database
     ) async throws -> SchemaModel {
         // Создаем схему
-        let schemaModel = SchemaModel(name: name)
-        try await schemaModel.save(on: req.db)
+        let schemaModel = SchemaModel(
+            name: name
+        )
+        try await schemaModel.create(on: database)
         
-        // Рекурсивно импортируем атрибуты
+        // Импортируем атрибуты
         try await importSchemaAttributes(
             from: schema,
             parentPath: [],
             parentSchema: schemaModel,
-            on: req
+            on: database
         )
         
         return schemaModel
@@ -167,21 +197,21 @@ struct OpenAPIImportController: RouteCollection {
         from schema: JSONSchema,
         parentPath: [String],
         parentSchema: SchemaModel,
-        on req: Request
+        on database: Database
     ) async throws {
         switch schema.value {
-        case .object(let format, let context):
+        case .object(_, let context):
             // Обрабатываем свойства объекта
             for (propertyName, propertySchema) in context.properties {
                 let currentPath = parentPath + [propertyName]
                 
                 // Создаем атрибут для свойства
-                let attribute = try await createAttribute(
+                _ = try await createAttribute(
                     name: propertyName,
                     schema: propertySchema,
                     path: currentPath,
                     parentSchema: parentSchema,
-                    on: req
+                    on: database
                 )
                 
                 // Рекурсивно обрабатываем вложенные объекты
@@ -190,21 +220,20 @@ struct OpenAPIImportController: RouteCollection {
                         from: propertySchema,
                         parentPath: currentPath,
                         parentSchema: parentSchema,
-                        on: req
+                        on: database
                     )
                 }
                 
                 // Обрабатываем массивы объектов
-                if case .array(_, let arrayContext) = propertySchema.value {
-                    if let items = arrayContext.items,
-                       case .object = items.value {
-                        try await importSchemaAttributes(
-                            from: items,
-                            parentPath: currentPath + ["[]"],
-                            parentSchema: parentSchema,
-                            on: req
-                        )
-                    }
+                if case .array(_, let arrayContext) = propertySchema.value,
+                   let items = arrayContext.items,
+                   case .object = items.value {
+                    try await importSchemaAttributes(
+                        from: items,
+                        parentPath: currentPath + ["[]"],
+                        parentSchema: parentSchema,
+                        on: database
+                    )
                 }
             }
             
@@ -216,7 +245,7 @@ struct OpenAPIImportController: RouteCollection {
                     from: items,
                     parentPath: parentPath + ["[]"],
                     parentSchema: parentSchema,
-                    on: req
+                    on: database
                 )
             }
             
@@ -231,88 +260,54 @@ struct OpenAPIImportController: RouteCollection {
         schema: JSONSchema,
         path: [String],
         parentSchema: SchemaModel,
-        on req: Request
+        on database: Database
     ) async throws -> SchemaAttributeModel {
-        let type = getSchemaType(from: schema)
-        let isNullable = schema.nullable
-        
         let attribute = SchemaAttributeModel(
-            name: path.joined(separator: "."),
-            type: type,
-            isNullable: isNullable,
+            name: name,
+            type: getSchemaType(from: schema),
+            isNullable: schema.nullable,
             description: schema.description ?? "",
             defaultValue: getDefaultValue(from: schema),
             schemaID: parentSchema.id!
         )
         
-        try await attribute.save(on: req.db)
+        try await attribute.create(on: database)
         return attribute
     }
     
     private func getSchemaType(from schema: JSONSchema) -> String {
         switch schema.value {
         case .string(let context, _):
-            let format = context.format.rawValue
-            return "string(\(format))"
+            return context.format.rawValue
         case .integer(let context, _):
-            let format = context.format.rawValue
-            return "integer(\(format))"
+            return context.format.rawValue
         case .number(let context, _):
-            let format = context.format.rawValue
-            return "number(\(format))"
+            return context.format.rawValue
         case .boolean:
             return "boolean"
         case .object:
             return "object"
         case .array:
             return "array"
-        case .reference(let ref, _):
-            return "ref(\(ref.name ?? ""))"
-        case .all, .one, .any:
-            return "composite"
+        case .reference(let ref):
+            return "ref(\(ref.0.name ?? ref.1.title ?? "unknown"))"
+        case .all:
+            return "allOf"
+        case .one:
+            return "oneOf"
+        case .any:
+            return "anyOf"
         case .not:
             return "not"
         case .fragment:
             return "any"
-        case .null(_):
+        case .null:
             return "null"
-        }
-    }
-    
-    private func getSchemaType(from schema: OpenAPI.Parameter.SchemaContext) -> String {
-        switch schema.schema {
-        case .a(let jsonSchema):
-            return "null"
-        case .b(let jsonSchema):
-            return getSchemaType(from: jsonSchema)
         }
     }
     
     private func getDefaultValue(from schema: JSONSchema) -> String? {
-        switch schema.value {
-        case .string(let context, _):
-            if let defaultValue = context.defaultValue {
-                return "\(defaultValue)"
-            }
-            return nil
-        case .integer(let context, _):
-            if let defaultValue = context.defaultValue {
-                return "\(defaultValue)"
-            }
-            return nil
-        case .number(let context, _):
-            if let defaultValue = context.defaultValue {
-                return "\(defaultValue)"
-            }
-            return nil
-        case .boolean(let context):
-            if let defaultValue = context.defaultValue {
-                return "\(defaultValue)"
-            }
-            return nil
-        default:
-            return nil
-        }
+        return nil
     }
     
     private func importPath(
@@ -321,54 +316,54 @@ struct OpenAPIImportController: RouteCollection {
         service: ServiceModel,
         components: OpenAPI.Components?,
         schemaMap: [String: SchemaModel],
-        on req: Request,
+        on database: Database,
         stats: inout ImportStats
     ) async throws {
         // Импортируем операции для каждого метода
-        for metoper in pathItem.endpoints {
+        for endpoint in pathItem.endpoints {
             // Создаем API вызов
             let apiCall = APICallModel(
                 path: path,
-                method: metoper.method.rawValue.uppercased(),
-                description: metoper.operation.description ?? metoper.operation.summary ?? "No description",
-                tags: metoper.operation.tags?.map { $0 } ?? [],
+                method: endpoint.method.rawValue.uppercased(),
+                description: endpoint.operation.description ?? endpoint.operation.summary ?? "No description",
+                tags: endpoint.operation.tags?.map { $0 } ?? [],
                 serviceID: service.id!
             )
-            try await apiCall.save(on: req.db)
+            try await apiCall.create(on: database)
             stats.importedEndpoints += 1
             
             // Импортируем параметры
-            let allParameters = metoper.operation.parameters + pathItem.parameters
+            let allParameters = endpoint.operation.parameters
             for parameter in allParameters {
                 try await importParameter(
                     parameter: parameter.b!,
                     apiCall: apiCall,
-                    components: components,
-                    on: req,
+                    on: database,
                     stats: &stats
                 )
             }
             
             // Импортируем тело запроса
-            if let requestBody = metoper.operation.requestBody {
+            if let requestBody = endpoint.operation.requestBody?.b {
                 try await importRequestBody(
-                    requestBody: requestBody.b!,
+                    requestBody: requestBody,
                     apiCall: apiCall,
                     components: components,
                     schemaMap: schemaMap,
-                    on: req
+                    on: database
                 )
             }
             
             // Импортируем ответы
-            for (statusCode, response) in metoper.operation.responses {
+            for (statusCode, response) in endpoint.operation.responses {
+                guard let responseValue = response.b else { continue }
                 try await importResponse(
                     statusCode: statusCode,
-                    response: response.b!,
+                    response: responseValue,
                     apiCall: apiCall,
                     components: components,
                     schemaMap: schemaMap,
-                    on: req,
+                    on: database,
                     stats: &stats
                 )
             }
@@ -378,8 +373,7 @@ struct OpenAPIImportController: RouteCollection {
     private func importParameter(
         parameter: OpenAPI.Parameter,
         apiCall: APICallModel,
-        components: OpenAPI.Components?,
-        on req: Request,
+        on database: Database,
         stats: inout ImportStats
     ) async throws {
         let paramType: String
@@ -387,7 +381,7 @@ struct OpenAPIImportController: RouteCollection {
         
         switch parameter.schemaOrContent {
         case .a(let schema):
-            paramType = getSchemaType(from: schema)
+            paramType = "content"
             example = getExample(from: schema)
         case .b:
             paramType = "content"
@@ -404,20 +398,26 @@ struct OpenAPIImportController: RouteCollection {
             apiCallID: apiCall.id!
         )
         
-        try await param.save(on: req.db)
+        try await param.create(on: database)
         stats.importedParameters += 1
     }
     
     private func getExample(from schema: OpenAPI.Parameter.SchemaContext) -> String? {
-        if let example = schema.examples?.first {
+        guard let examples = schema.examples else { return nil }
+        
+        for example in examples {
             switch example.value {
-            case .a(let a):
-                return a.name
-            case .b(let b):
-                return b.description
+            case .a(let exampleValue):
+                if let jsonData = try? JSONSerialization.data(withJSONObject: exampleValue),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    return jsonString
+                }
+            case .b(let exampleObject):
+                return exampleObject.summary ?? exampleObject.description
             }
         }
-        return ""
+        
+        return nil
     }
     
     private func importRequestBody(
@@ -425,43 +425,32 @@ struct OpenAPIImportController: RouteCollection {
         apiCall: APICallModel,
         components: OpenAPI.Components?,
         schemaMap: [String: SchemaModel],
-        on req: Request
+        on database: Database
     ) async throws {
         // Получаем схему из тела запроса
         guard let content = requestBody.content.first else { return }
+        
         if let schema = content.value.schema {
             // Находим или создаем схему
             let schemaModel: SchemaModel
             
             if case .b(let ref) = schema,
-               let existingSchema = schemaMap[ref.title ?? "string"] {
+               let refName = ref.title,
+               let existingSchema = schemaMap[refName] {
                 schemaModel = existingSchema
+                schemaModel.$apiCall.id = apiCall.id
+                try await schemaModel.save(on: database)
             } else {
                 // Создаем новую схему для запроса
+                let schemaName = "\(apiCall.path.replacingOccurrences(of: "/", with: "_"))_\(apiCall.method)_request"
                 schemaModel = try await importSchema(
-                    name: "\(apiCall.path.replacingOccurrences(of: "/", with: "_"))_\(apiCall.method)_request",
-                    schema: schema.b!,
-                    on: req
+                    name: schemaName,
+                    schema: schema.b ?? .fragment(),
+                    on: database
                 )
+                schemaModel.$apiCall.id = apiCall.id
+                try await schemaModel.save(on: database)
             }
-            
-            // Связываем схему с API вызовом
-            let linkDTO = LinkAPISchemaDTO(
-                apiCallId: apiCall.id!,
-                schemaID: schemaModel.id!
-            )
-            
-            let request = Request(
-                application: req.application,
-                method: .POST,
-                url: URI(string: "/api/v1/calls/link-schema-request"),
-                headers: req.headers,
-                collectedBody: ByteBufferAllocator().buffer(data: try JSONEncoder().encode(linkDTO)),
-                remoteAddress: req.remoteAddress,
-                on: req.eventLoop
-            )
-            
-            _ = try await APICallController().linkSchemaRequestWithAPI(req: request)
         }
     }
     
@@ -471,72 +460,53 @@ struct OpenAPIImportController: RouteCollection {
         apiCall: APICallModel,
         components: OpenAPI.Components?,
         schemaMap: [String: SchemaModel],
-        on req: Request,
+        on database: Database,
         stats: inout ImportStats
     ) async throws {
-        let statusCodeValue = 200
+        let statusCodeValue: Int = 200
         
         // Получаем контент из ответа
-        let content = response.content.first?.value
-        let contentType = response.content.first?.key.rawValue ?? "application/json"
+        let content = response.content.first
+        let contentType = content?.key.rawValue ?? "application/json"
         
-        // Создаем DTO для ответа
-        let responseDTO = CreateResponseDTO(
+        // Создаем ответ
+        let responseModel = APIResponseModel(
             statusCode: statusCodeValue,
             description: response.description,
             contentType: contentType,
-            examples: extractExamples(from: content),
-            headers: nil
+            examples: extractExamples(from: content?.value),
+            apiCallID: apiCall.id!
         )
-        
-        // Создаем ответ через существующий контроллер
-        let request = Request(
-            application: req.application,
-            method: .POST,
-            url: URI(string: "/api/v1/calls/\(apiCall.id!)/responses"),
-            headers: req.headers,
-            collectedBody: ByteBufferAllocator().buffer(data:try JSONEncoder().encode(responseDTO)),
-            remoteAddress: req.remoteAddress,
-            on: req.eventLoop
-        )
-        
-        let createdResponse = try await APICallController().createResponse(req: request)
+        try await responseModel.create(on: database)
         stats.importedResponses += 1
         
         // Связываем схему с ответом, если есть
-        if let schema = content?.schema {
+        if let schema = content?.value.schema {
             let schemaModel: SchemaModel
             
             if case .b(let ref) = schema,
-               let existingSchema = schemaMap[ref.title ?? "string"] {
+               let refName = ref.title,
+               let existingSchema = schemaMap[refName] {
                 schemaModel = existingSchema
             } else {
                 // Создаем новую схему для ответа
+                let schemaName = "\(apiCall.path.replacingOccurrences(of: "/", with: "_"))_\(apiCall.method)_response_\(statusCodeValue)"
                 schemaModel = try await importSchema(
-                    name: "\(apiCall.path.replacingOccurrences(of: "/", with: "_"))_\(apiCall.method)_response_\(statusCodeValue)",
-                    schema: schema.b!,
-                    on: req
+                    name: schemaName,
+                    schema: schema.b ?? .fragment(),
+                    on: database
                 )
                 stats.importedSchemas += 1
             }
             
+            schemaModel.$response.id = apiCall.id
+            try await schemaModel.save(on: database)
             // Связываем схему с ответом
-            let linkDTO = LinkResponseSchemaDTO(
-                responseID: createdResponse.id!,
-                schemaID: schemaModel.id!
-            )
-            
-            let linkRequest = Request(
-                application: req.application,
-                method: .POST,
-                url: URI(string: "/api/v1/calls/link-schema-response"),
-                headers: req.headers,
-                collectedBody: ByteBufferAllocator().buffer(data:try JSONEncoder().encode(linkDTO)),
-                remoteAddress: req.remoteAddress,
-                on: req.eventLoop
-            )
-            
-            _ = try await APICallController().linkSchemaWithResponse(req: linkRequest)
+//            let responseSchema = SchemaModel(
+//                responseID: responseModel.id!,
+//                schemaID: schemaModel.id!
+//            )
+//            try await responseSchema.create(on: database)
         }
     }
     
@@ -546,13 +516,13 @@ struct OpenAPIImportController: RouteCollection {
         var result: [String: String] = [:]
         for (key, example) in examples {
             switch example {
-            
-            case .a(let value):
-                if let valueString = try? String(data: JSONEncoder().encode(value), encoding: .utf8) {
-                    result[key] = valueString
+            case .a(let exampleValue):
+                if let jsonData = try? JSONSerialization.data(withJSONObject: exampleValue),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    result[key] = jsonString
                 }
-            case .b:
-                continue
+            case .b(let exampleObject):
+                result[key] = exampleObject.summary ?? exampleObject.description ?? ""
             }
         }
         
@@ -592,9 +562,3 @@ struct ImportStats {
 }
 
 // MARK: - Регистрация контроллера
-
-extension OpenAPIImportController {
-    static func registerRoutes(_ app: Application) throws {
-        try app.routes.register(collection: OpenAPIImportController())
-    }
-}

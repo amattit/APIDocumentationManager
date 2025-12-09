@@ -10,6 +10,8 @@ struct APICallController: RouteCollection {
         // CRUD маршруты
         apiCalls.get(use: getAll)
         apiCalls.get(":id", use: getById)
+        apiCalls.post("link-schema-response", use: linkSchemaWithResponse)
+        apiCalls.post("link-schema-request", use: linkSchemaRequestWithAPI)
         serviceCalls.post(use: create)
         serviceCalls.put(":id", use: update)
         serviceCalls.delete(":id", use: delete)

@@ -51,7 +51,7 @@ struct CreateAPICallModelMigration: AsyncMigration {
             .field("path", .string, .required)
             .field("method", .string, .required)
             .field("description", .string, .required)
-            .field("tags", .json, .required)
+            .field("tags", .array(of: .string))
             .field("created_at", .datetime)
             .field("updated_at", .datetime)
             .field("service_id", .uuid, .required, .references("services", "id", onDelete: .cascade))

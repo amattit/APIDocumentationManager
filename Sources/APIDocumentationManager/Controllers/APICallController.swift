@@ -10,6 +10,10 @@ struct APICallController: RouteCollection {
         // CRUD маршруты
         apiCalls.get(use: getAll)
         apiCalls.get(":id", use: getById)
+        apiCalls.post(use: create)
+        apiCalls.put(":id", use: update)
+        apiCalls.delete(":id", use: delete)
+        
         // CUD responses
         apiCalls.post(":id", "responses", use: createResponse)
         apiCalls.post("responses", ":responseID", use: updateResponse)
@@ -17,9 +21,11 @@ struct APICallController: RouteCollection {
         apiCalls.post("link-schema-response", use: linkSchemaWithResponse)
         apiCalls.post("link-schema-request", use: linkSchemaRequestWithAPI)
         
-        serviceCalls.post(use: create)
-        serviceCalls.put(":id", use: update)
-        serviceCalls.delete(":id", use: delete)
+        //CUD parameters
+        apiCalls.post(":id", "parameters", use: createParameters)
+        apiCalls.post(":id", "parameter", use: createParameter)
+        apiCalls.put(":id", "parameter", ":parameterID", use: updateParameter)
+        apiCalls.post(":id", "parameter", ":parameterID", use: deleteParameter)
         
         // Дополнительные маршруты
         serviceCalls.get(use: getByService)
@@ -103,7 +109,7 @@ struct APICallController: RouteCollection {
     }
     
     func updateResponse(req: Request) async throws -> APIResponseModel {
-        guard let responseID = req.parameters.get(":responseID", as: UUID.self) else {
+        guard let responseID = req.parameters.get("responseID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         let input = try req.content.decode(UpdateResponseDTO.self)
@@ -126,7 +132,7 @@ struct APICallController: RouteCollection {
     }
     
     func deleteResponse(req: Request) async throws -> HTTPStatus {
-        guard let responseID = req.parameters.get(":responseID", as: UUID.self) else {
+        guard let responseID = req.parameters.get("responseID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         
@@ -139,6 +145,87 @@ struct APICallController: RouteCollection {
         
         try await response.delete(on: req.db)
         
+        return .noContent
+    }
+    
+    func createParameter(req: Request) async throws -> HTTPStatus {
+        guard let apiCallID = req.parameters.get("id", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        
+        let input = try req.content.decode(CreateParameterDTO.self)
+        
+        let parameter = ParameterModel(
+            name: input.name,
+            type: input.type,
+            location: input.location,
+            required: input.required,
+            description: input.description,
+            example: input.example,
+            apiCallID: apiCallID
+        )
+        
+        try await parameter.save(on: req.db)
+        return .noContent
+    }
+    
+    func createParameters(req: Request) async throws -> HTTPStatus {
+        guard let apiCallID = req.parameters.get("id", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        
+        let input = try req.content.decode([CreateParameterDTO].self)
+        let params = input.map { input in
+            ParameterModel(
+                name: input.name,
+                type: input.type,
+                location: input.location,
+                required: input.required,
+                description: input.description,
+                example: input.example,
+                apiCallID: apiCallID
+            )
+        }
+        
+        try await params.create(on: req.db)
+        return .noContent
+    }
+    
+    func updateParameter(req: Request) async throws -> HTTPStatus {
+        guard
+            let apiParamID = req.parameters.get("parameterID", as: UUID.self)
+        else {
+            throw Abort(.badRequest)
+        }
+        
+        let input = try req.content.decode(UpdateParameterDTO.self)
+        guard let parameter = try await ParameterModel.find(apiParamID, on: req.db)
+        else {
+            throw Abort(.notFound, reason: "parameter not found")
+        }
+        parameter.name = input.name ?? parameter.name
+        parameter.type = input.type ?? parameter.type
+        parameter.location = input.location ?? parameter.location
+        parameter.required = input.required ?? parameter.required
+        parameter.description = input.description ?? parameter.description
+        parameter.example = input.type ?? parameter.example
+        
+        try await parameter.save(on: req.db)
+        return .noContent
+    }
+    
+    func deleteParameter(req: Request) async throws -> HTTPStatus {
+        guard
+            let apiParamID = req.parameters.get("parameterID", as: UUID.self)
+        else {
+            throw Abort(.badRequest)
+        }
+        
+        guard let parameter = try await ParameterModel.find(apiParamID, on: req.db)
+        else {
+            throw Abort(.notFound, reason: "parameter not found")
+        }
+        try await parameter.delete(on: req.db)
         return .noContent
     }
     

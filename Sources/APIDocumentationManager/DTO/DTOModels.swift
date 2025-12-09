@@ -99,3 +99,21 @@ public struct UpdateResponseDTO: Content, Sendable {
     let examples: [String: String]?
     let headers: [String: String]?
 }
+
+public struct CreateParameterDTO: Content, Sendable {
+    let name: String
+    let type: String
+    let location: String
+    let required: Bool
+    let description: String?
+    let example: String?
+}
+
+public struct UpdateParameterDTO: Content, Sendable {
+    let name: String?
+    let type: String?
+    let location: String?
+    let required: Bool?
+    let description: String?
+    let example: String?
+}

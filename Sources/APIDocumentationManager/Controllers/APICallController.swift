@@ -29,7 +29,11 @@ struct APICallController: RouteCollection {
     func getAll(req: Request) async throws -> [APICallModel] {
         try await APICallModel.query(on: req.db)
             .with(\.$parameters)
-            .with(\.$responses)
+            .with(\.$responses, {res in
+                res.with(\.$schemaModel, {
+                    $0.with(\.$attributes)
+                })
+            })
             .with(\.$requestModel)
             .all()
     }
@@ -46,7 +50,12 @@ struct APICallController: RouteCollection {
         
         try await apiCall.$parameters.load(on: req.db)
         try await apiCall.$responses.load(on: req.db)
+        for response in apiCall.responses {
+            try await response.$schemaModel.load(on: req.db)
+            try await response.schemaModel?.$attributes.load(on: req.db)
+        }
         try await apiCall.$requestModel.load(on: req.db)
+        try await apiCall.requestModel?.$attributes.load(on: req.db)
         
         return apiCall
     }

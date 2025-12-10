@@ -18,8 +18,7 @@ let package = Package(
             .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.0.0"),
             .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.0.0"),
             .package(url: "https://github.com/vapor/fluent.git", from: "4.8.0"),
-//            .package(url: "https://github.com/mattpolzin/OpenAPIKit.git", from: "3.0.0"),
-            .package(url: "https://github.com/mattpolzin/OpenAPIKit.git", exact: "3.0.0"),
+            .package(url: "https://github.com/mattpolzin/OpenAPIKit.git", from: "3.0.0"),
             .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0")
         ],
         targets: [

@@ -19,6 +19,7 @@ public struct APIDocumentationConfiguration {
                 CreateServiceEnvironmentModelMigration(),
                 CreateAPICallModelMigration(),
                 CreateParameterModelMigration(),
+                CreateServiceCallModelMigration(),
                 CreateAPIResponseModelMigration(),
                 CreateSchemaModelMigration(),
                 CreateAPIResponseSchemaMigration(),
@@ -29,6 +30,7 @@ public struct APIDocumentationConfiguration {
                 SchemaController(),
                 ServiceController(),
                 OpenAPIImportController(),
+                ServiceCallController(),
             ]
         )
     }

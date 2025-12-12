@@ -101,6 +101,28 @@ public final class ServiceModel: Model, Content, Sendable {
         self.owner = owner
         self.description = description
     }
+    
+    // Метод для получения всех исходящих вызовов (через API вызовы сервиса)
+    public func getOutgoingCalls(on db: Database) async throws -> [ServiceCallModel] {
+        let apiCalls = try await self.$apiCalls.get(on: db)
+        var allCalls: [ServiceCallModel] = []
+        for apiCall in apiCalls {
+            let calls = try await apiCall.$outgoingCalls.get(on: db)
+            allCalls.append(contentsOf: calls)
+        }
+        return allCalls
+    }
+    
+    // Метод для получения всех входящих вызовов
+    public func getIncomingCalls(on db: Database) async throws -> [ServiceCallModel] {
+        let apiCalls = try await self.$apiCalls.get(on: db)
+        var allCalls: [ServiceCallModel] = []
+        for apiCall in apiCalls {
+            let calls = try await apiCall.$incomingCalls.get(on: db)
+            allCalls.append(contentsOf: calls)
+        }
+        return allCalls
+    }
 }
 
 // MARK: API Call Model
@@ -139,6 +161,14 @@ public final class APICallModel: Model, Content, Sendable {
     
     @Timestamp(key: "updated_at", on: .update)
     public var updatedAt: Date?
+    
+    // Исходящие вызовы (к другим сервисам)
+    @Children(for: \.$sourceAPICall)
+    public var outgoingCalls: [ServiceCallModel]
+    
+    // Входящие вызовы (от других сервисов)
+    @Children(for: \.$targetAPICall)
+    public var incomingCalls: [ServiceCallModel]
     
     public init() {}
     
@@ -383,6 +413,54 @@ public final class SchemaAttributeModel: Model, Content, Sendable {
         self.defaultValue = defaultValue
         self.$schema.id = schemaID
         self.ofType = ofType
+    }
+}
+
+// MARK: Service Call Model - для построения графов взаимодействия сервисов
+public final class ServiceCallModel: Model, Content, Sendable {
+    public static let schema = "service_calls"
+    
+    @ID(key: .id)
+    public var id: UUID?
+    
+    // Исходный API вызов (кто вызывает)
+    @Parent(key: "source_api_call_id")
+    public var sourceAPICall: APICallModel
+    
+    // Целевой API вызов (кого вызывают)
+    @Parent(key: "target_api_call_id")
+    public var targetAPICall: APICallModel
+    
+    // Тип взаимодействия (HTTP, gRPC, WebSocket и т.д.)
+    @Field(key: "call_type")
+    public var callType: String
+    
+    // Описание взаимодействия (опционально)
+    @Field(key: "description")
+    public var description: String?
+    
+    @Timestamp(key: "created_at", on: .create)
+    public var createdAt: Date?
+    
+    @Timestamp(key: "updated_at", on: .update)
+    public var updatedAt: Date?
+    
+    public init() {}
+    
+    public init(
+        id: UUID? = nil,
+        sourceAPICallID: UUID,
+        targetAPICallID: UUID,
+        callType: String = "HTTP",
+        description: String? = nil,
+        callParameters: [String: String]? = nil,
+        frequency: String? = nil
+    ) {
+        self.id = id
+        self.$sourceAPICall.id = sourceAPICallID
+        self.$targetAPICall.id = targetAPICallID
+        self.callType = callType
+        self.description = description
     }
 }
 

@@ -63,6 +63,26 @@ struct CreateAPICallModelMigration: AsyncMigration {
     }
 }
 
+struct CreateServiceCallModelMigration: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        try await database.schema("service_calls")
+            .id()
+            .field("source_api_call_id", .uuid, .required, .references("api_calls", "id", onDelete: .cascade))
+            .field("target_api_call_id", .uuid, .required, .references("api_calls", "id", onDelete: .cascade))
+            .field("call_type", .string, .required)
+            .field("description", .string)
+            .field("created_at", .datetime)
+            .field("updated_at", .datetime)
+            // Индексы для оптимизации запросов
+            .unique(on: "source_api_call_id", "target_api_call_id")
+            .create()
+    }
+    
+    func revert(on database: Database) async throws {
+        try await database.schema("service_calls").delete()
+    }
+}
+
 struct CreateParameterModelMigration: AsyncMigration {
     func prepare(on database: Database) async throws {
         try await database.schema("parameters")
@@ -116,7 +136,6 @@ struct CreateSchemaModelMigration: AsyncMigration {
     }
 }
 
-// Новая миграция для связи многие-ко-многим
 struct CreateAPIResponseSchemaMigration: AsyncMigration {
     func prepare(on database: Database) async throws {
         try await database.schema("api_response_schema")

@@ -11,7 +11,7 @@ import Fluent
 struct SchemaController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
         let schemas = routes.grouped("api", "v1", "schemas")
-        
+        let schema = routes.grouped("api", "v1", "schema")
         // CRUD маршруты
         schemas.get(use: getAll)
         schemas.get(":id", use: getById)
@@ -23,6 +23,8 @@ struct SchemaController: RouteCollection {
         schemas.get(":id", "attributes", use: getAttributes)
         schemas.get("call", ":callId", use: getByAPICall)
         schemas.get("response", ":responseId", use: getByResponse)
+        
+        schema.get(use: getModelByName)
     }
     
     // Получить все схемы
@@ -156,18 +158,37 @@ struct SchemaController: RouteCollection {
     }
     
     // Получить схему по ответу API
-    func getByResponse(req: Request) async throws -> SchemaModel {
+    func getByResponse(req: Request) async throws -> [SchemaModel] {
         guard let responseId = req.parameters.get("responseId", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         
-        guard let schema = try await SchemaModel.query(on: req.db)
-            .filter(\.$response.$id == responseId)
-            .with(\.$attributes)
-            .first()
-        else {
-            throw Abort(.notFound, reason: "Schema not found")
+        guard let response = try await APIResponseModel.find(responseId, on: req.db) else {
+            throw Abort(.notFound, reason: "api response not found")
         }
+        try await response.$schemas.load(on: req.db)
+        
+        for schema in response.schemas {
+            try await schema.$attributes.load(on: req.db)
+        }
+        
+        return response.schemas
+    }
+    
+    // Получить Модель по Имени.
+    // src__integrations__podcast__models__episode__EpisodeItem
+    // /api/v1/schema?name=""
+    func getModelByName(req: Request) async throws -> [SchemaModel] {
+        let input = try req.query.decode(GetModelNameRequest.self)
+        let schema = try await SchemaModel
+            .query(on: req.db)
+            .filter(\.$name == input.name)
+            .with(\.$attributes)
+            .all()
         return schema
     }
+}
+
+struct GetModelNameRequest: Content {
+    let name: String
 }

@@ -61,7 +61,7 @@ public struct ServiceController: RouteCollection {
             .with(\.$apiCalls, {
                 $0.with(\.$requestModel)
                 $0.with(\.$parameters)
-                $0.with(\.$responses, { $0.with(\.$schemaModel) } )
+                $0.with(\.$responses, { $0.with(\.$schemas) } )
             })
             .first() else {
             throw Abort(.notFound)

@@ -105,15 +105,31 @@ struct CreateSchemaModelMigration: AsyncMigration {
         try await database.schema("schemas")
             .id()
             .field("name", .string, .required)
+            .field("api_call_id", .uuid, .references("api_calls", "id", onDelete: .cascade))
             .field("created_at", .datetime)
             .field("updated_at", .datetime)
-            .field("api_response_id", .uuid, .references("api_responses", "id", onDelete: .cascade))
-            .field("api_call_id", .uuid, .references("api_calls", "id", onDelete: .cascade))
             .create()
     }
     
     func revert(on database: Database) async throws {
         try await database.schema("schemas").delete()
+    }
+}
+
+// Новая миграция для связи многие-ко-многим
+struct CreateAPIResponseSchemaMigration: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        try await database.schema("api_response_schema")
+            .id()
+            .field("api_response_id", .uuid, .required, .references("api_responses", "id", onDelete: .cascade))
+            .field("schema_id", .uuid, .required, .references("schemas", "id", onDelete: .cascade))
+            .field("created_at", .datetime)
+            .unique(on: "api_response_id", "schema_id")
+            .create()
+    }
+    
+    func revert(on database: Database) async throws {
+        try await database.schema("api_response_schema").delete()
     }
 }
 
@@ -127,6 +143,7 @@ struct CreateSchemaAttributeModelMigration: AsyncMigration {
             .field("description", .string, .required)
             .field("default_value", .string)
             .field("schema_id", .uuid, .required, .references("schemas", "id", onDelete: .cascade))
+            .field("of_type", .string)
             .create()
     }
     

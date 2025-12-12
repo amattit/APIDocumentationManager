@@ -38,7 +38,7 @@ struct APICallController: RouteCollection {
         try await APICallModel.query(on: req.db)
             .with(\.$parameters)
             .with(\.$responses, {res in
-                res.with(\.$schemaModel, {
+                res.with(\.$schemas, {
                     $0.with(\.$attributes)
                 })
             })
@@ -59,8 +59,10 @@ struct APICallController: RouteCollection {
         try await apiCall.$parameters.load(on: req.db)
         try await apiCall.$responses.load(on: req.db)
         for response in apiCall.responses {
-            try await response.$schemaModel.load(on: req.db)
-            try await response.schemaModel?.$attributes.load(on: req.db)
+            try await response.$schemas.load(on: req.db)
+            for schema in response.schemas {
+                try await schema.$attributes.load(on: req.db)
+            }
         }
         try await apiCall.$requestModel.load(on: req.db)
         try await apiCall.requestModel?.$attributes.load(on: req.db)
@@ -309,7 +311,7 @@ struct APICallController: RouteCollection {
         }
         
         return try await apiCall.$responses.query(on: req.db)
-            .with(\.$schemaModel)
+            .with(\.$schemas)
             .all()
     }
     
@@ -324,10 +326,10 @@ struct APICallController: RouteCollection {
         else {
             throw Abort(.notFound, reason: "response not found")
         }
-        schema.$response.id = input.responseID
+        try await schema.$apiResponses.attach(response, on: req.db)
         try await schema.save(on: req.db)
         
-        try await response.$schemaModel.load(on: req.db)
+        try await response.$schemas.load(on: req.db)
         return response
     }
     

@@ -210,6 +210,35 @@ public final class ParameterModel: Model, Content, Sendable {
     }
 }
 
+// MARK: API Response Schema Pivot
+public final class APIResponseSchemaModel: Model {
+    public static let schema = "api_response_schema"
+    
+    @ID(key: .id)
+    public var id: UUID?
+    
+    @Parent(key: "api_response_id")
+    public var apiResponse: APIResponseModel
+    
+    @Parent(key: "schema_id")
+    public var schema: SchemaModel
+    
+    @Timestamp(key: "created_at", on: .create)
+    public var createdAt: Date?
+    
+    public init() {}
+    
+    public init(
+        id: UUID? = nil,
+        apiResponseID: UUID,
+        schemaID: UUID
+    ) {
+        self.id = id
+        self.$apiResponse.id = apiResponseID
+        self.$schema.id = schemaID
+    }
+}
+
 // MARK: API Response Model
 public final class APIResponseModel: Model, Content, Sendable {
     public static let schema = "api_responses"
@@ -232,8 +261,13 @@ public final class APIResponseModel: Model, Content, Sendable {
     @Field(key: "headers")
     public var headers: [String: String]?
     
-    @OptionalChild(for: \.$response)
-    public var schemaModel: SchemaModel?
+    // Связь многие-ко-многим с SchemaModel
+    @Siblings(
+        through: APIResponseSchemaModel.self,
+        from: \.$apiResponse,
+        to: \.$schema
+    )
+    public var schemas: [SchemaModel]
     
     @Parent(key: "api_call_id")
     public var apiCall: APICallModel
@@ -276,8 +310,13 @@ public final class SchemaModel: Model, Content, Sendable {
     @OptionalParent(key: "api_call_id")
     public var apiCall: APICallModel?
     
-    @OptionalParent(key: "api_response_id")
-    public var response: APIResponseModel?
+    // Связь многие-ко-многим с APIResponseModel
+    @Siblings(
+        through: APIResponseSchemaModel.self,
+        from: \.$schema,
+        to: \.$apiResponse
+    )
+    public var apiResponses: [APIResponseModel]
     
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
@@ -318,6 +357,9 @@ public final class SchemaAttributeModel: Model, Content, Sendable {
     @Field(key: "default_value")
     public var defaultValue: String?
     
+    @Field(key: "of_type")
+    public var ofType: String?
+    
     @Parent(key: "schema_id")
     public var schema: SchemaModel
     
@@ -330,7 +372,8 @@ public final class SchemaAttributeModel: Model, Content, Sendable {
         isNullable: Bool,
         description: String,
         defaultValue: String? = nil,
-        schemaID: UUID
+        schemaID: UUID,
+        ofType: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -339,5 +382,19 @@ public final class SchemaAttributeModel: Model, Content, Sendable {
         self.description = description
         self.defaultValue = defaultValue
         self.$schema.id = schemaID
+        self.ofType = ofType
+    }
+}
+
+extension SchemaAttributeModel {
+    func printData() {
+        let data = """
+    name: \(name)
+    type: \(type)
+    isNullable: \(isNullable)
+    description: \(description)
+    ofType: \(ofType)
+"""
+        print(data)
     }
 }

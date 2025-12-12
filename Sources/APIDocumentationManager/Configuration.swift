@@ -21,13 +21,14 @@ public struct APIDocumentationConfiguration {
                 CreateParameterModelMigration(),
                 CreateAPIResponseModelMigration(),
                 CreateSchemaModelMigration(),
-                CreateSchemaAttributeModelMigration()
+                CreateAPIResponseSchemaMigration(),
+                CreateSchemaAttributeModelMigration(),
             ],
             collections: [
                 APICallController(),
                 SchemaController(),
                 ServiceController(),
-                OpenAPIImportController()
+                OpenAPIImportController(),
             ]
         )
     }

@@ -276,14 +276,19 @@ struct APICallController: RouteCollection {
     
     // Получить API вызовы по сервису
     func getByService(req: Request) async throws -> [APICallModel] {
-        guard let serviceId = req.parameters.get("serviceId", as: UUID.self) else {
+        guard let serviceId = req.parameters.get("serviceID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         
         return try await APICallModel.query(on: req.db)
             .filter(\.$service.$id == serviceId)
             .with(\.$parameters)
-            .with(\.$responses)
+            .with(\.$responses, {res in
+                res.with(\.$schemas, {
+                    $0.with(\.$attributes)
+                })
+            })
+            .with(\.$requestModel, { $0.with(\.$attributes) })
             .all()
     }
     

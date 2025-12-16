@@ -207,7 +207,7 @@ class SchemaModelProcessor {
             schemaName = extractSchemaName(from: ref)
         } else {
             schemaName = generateSchemaName(
-                from: endpoint.operation.operationId,
+                from: endpoint.operation.operationId ?? "",
                 path: endpoint.path,
                 method: endpoint.method
             )
@@ -231,7 +231,7 @@ class SchemaModelProcessor {
         } else {
             // Генерируем имя для схемы
             schemaName = generateSchemaName(
-                from: endpoint.operation.operationId,
+                from: endpoint.operation.operationId ?? "",
                 path: endpoint.path,
                 method: endpoint.method,
                 isResponse: true,

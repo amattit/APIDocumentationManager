@@ -124,9 +124,9 @@ struct GraphMetadata: Content {
 
 struct ServiceCallController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
-        let serviceCalls = routes.grouped("service-calls")
-        let services = routes.grouped("services")
-        let apiCalls = routes.grouped("api-calls")
+        let serviceCalls = routes.grouped("api", "v1", "service-calls")
+        let services = routes.grouped("api", "v1", "service-calls", "services")
+        let apiCalls = routes.grouped("api", "v1", "service-calls", "api-calls")
         
         // 1. Управление связями между запросами
         serviceCalls.post(use: createServiceCall)

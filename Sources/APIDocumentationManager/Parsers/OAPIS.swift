@@ -61,7 +61,7 @@ struct Operation: Codable {
     let tags: [String]?
     let summary: String?
     let description: String?
-    let operationId: String
+    let operationId: String?
     let parameters: [Parameter]?
     let requestBody: RequestBody?
     let responses: [String: Response]
@@ -279,8 +279,8 @@ class Schema: Codable {
         oneOf = try container.decodeIfPresent([Schema].self, forKey: .oneOf)
         maximum = try container.decodeIfPresent(Double.self, forKey: .maximum)
         minimum = try container.decodeIfPresent(Double.self, forKey: .minimum)
-        exclusiveMaximum = try container.decodeIfPresent(Double.self, forKey: .exclusiveMaximum)
-        exclusiveMinimum = try container.decodeIfPresent(Double.self, forKey: .exclusiveMinimum)
+        exclusiveMaximum = try? container.decodeIfPresent(Double.self, forKey: .exclusiveMaximum) 
+        exclusiveMinimum = try? container.decodeIfPresent(Double.self, forKey: .exclusiveMinimum)
         maxLength = try container.decodeIfPresent(Int.self, forKey: .maxLength)
         minLength = try container.decodeIfPresent(Int.self, forKey: .minLength)
         pattern = try container.decodeIfPresent(String.self, forKey: .pattern)
@@ -516,7 +516,7 @@ struct EndpointInfo {
     let operation: Operation
     
     var operationId: String {
-        return operation.operationId
+        return operation.operationId ?? "unknown"
     }
     
     var summary: String? {

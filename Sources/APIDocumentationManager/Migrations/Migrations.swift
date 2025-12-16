@@ -126,6 +126,7 @@ struct CreateSchemaModelMigration: AsyncMigration {
             .id()
             .field("name", .string, .required)
             .field("api_call_id", .uuid, .references("api_calls", "id", onDelete: .cascade))
+            .field("service_id", .uuid, .references("services", "id", onDelete: .cascade))
             .field("created_at", .datetime)
             .field("updated_at", .datetime)
             .create()

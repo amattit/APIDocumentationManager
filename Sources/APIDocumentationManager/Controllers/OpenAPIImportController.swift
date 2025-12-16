@@ -12,7 +12,6 @@ struct OpenAPIImportController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
         let importRoutes = routes.grouped("api", "v1", "import")
         importRoutes.post("openapi", use: importOpenAPI)
-        importRoutes.post("openapi", "schema", use: importSchemas)
     }
     
     // Основная функция импорта
@@ -21,46 +20,6 @@ struct OpenAPIImportController: RouteCollection {
         
         // Загружаем OpenAPI спецификацию
         return try await loadOpenAPIDocument(from: input.url, req: req)
-    }
-    
-    func importSchemas(req: Request) async throws -> HTTPStatus {
-        let input = try req.content.decode(ImportOpenAPIRequest.self)
-        guard let url = URL(string: input.url) else {
-            throw Abort(.badRequest, reason: "Некорректный URL")
-        }
-        let decoder = JSONDecoder()
-        
-        // Загружаем содержимое спецификации
-        let response: ClientResponse
-        if url.scheme == "file" || url.isFileURL {
-            // Локальный файл
-            let filePath = url.absoluteString.replacingOccurrences(of: "file://", with: "")
-            guard FileManager.default.fileExists(atPath: filePath) else {
-                throw Abort(.badRequest, reason: "Файл не найден")
-            }
-            let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
-            let body = ByteBuffer(data: data)
-            response = ClientResponse(status: .ok, body: body)
-        } else {
-            // Удаленный URL
-            response = try await req.client.get(URI(string: url.absoluteString))
-        }
-        
-        guard response.status == .ok else {
-            throw Abort(.badRequest, reason: "Не удалось загрузить файл. Статус: \(response.status)")
-        }
-        
-        guard let body = response.body else {
-            throw Abort(.badRequest, reason: "Пустой ответ")
-        }
-        
-        let data = Data(buffer: body)
-        
-        // Определяем формат (JSON или YAML)
-        
-        let spec = try OpenAPIDecoder.decode(from: data)
-        try await DatabaseSchemaImporter.importAllSchemasToDatabase(from: spec, on: req.db)
-        return .ok
     }
     
     // MARK: - Вспомогательные методы
@@ -99,19 +58,24 @@ struct OpenAPIImportController: RouteCollection {
         let data = Data(buffer: body)
         
         let spec = try OpenAPIDecoder.decode(from: data)
-        try await DatabaseSchemaImporter.importAllSchemasToDatabase(from: spec, on: req.db)
-        try await handleService(spec: spec, on: req.db, stats: &stats)
-            
+        let service = try await handleService(spec: spec, on: req.db, stats: &stats)
+        
+        try await DatabaseSchemaImporter.importAllSchemasToDatabase(
+            from: spec,
+            serviceID: service.requireID(),
+            on: req.db
+        )
+        try await handleApiCalls(spec, for: service, on: req.db, stats: &stats)
+        print("✅ Successfully imported api")
         return stats
     }
     
-    func handleService(spec: OpenAPISpec, on db: Database, stats: inout ImportStats) async throws {
+    func handleService(spec: OpenAPISpec, on db: Database, stats: inout ImportStats) async throws  -> ServiceModel {
         let serviceInfo = spec.info
         let service = ServiceModel(name: spec.info.title, version: spec.info.version, type: "internal", owner: "TODO: Check owner")
         try await service.save(on: db)
         print("✅ Successfully created service")
-        try await handleApiCalls(spec, for: service, on: db, stats: &stats)
-        print("✅ Successfully imported api")
+        return service
     }
     
     func handleApiCalls(_ spec: OpenAPISpec, for service: ServiceModel, on db: Database, stats: inout ImportStats) async throws {

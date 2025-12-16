@@ -53,7 +53,7 @@ struct SchemaController: RouteCollection {
     func create(req: Request) async throws -> SchemaModel {
         let input = try req.content.decode(CreateSchemaRequest.self)
         
-        let schema = SchemaModel(name: input.name)
+        let schema = SchemaModel(name: input.name, serviceID: input.serviceId)
         try await schema.save(on: req.db)
         
         // Создаем атрибуты, если они переданы

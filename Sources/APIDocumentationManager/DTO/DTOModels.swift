@@ -60,6 +60,7 @@ struct UpdateAPICallRequest: Content {
 struct CreateSchemaRequest: Content {
     let name: String
     let attributes: [CreateAttributeRequest]?
+    let serviceId: UUID
 }
 
 struct UpdateSchemaRequest: Content {

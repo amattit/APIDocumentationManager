@@ -168,7 +168,10 @@ import Fluent
 class DatabaseSchemaImporter {
     
     /// Импортирует все схемы из OpenAPI спецификации в базу данных
-    static func importAllSchemasToDatabase(from spec: OpenAPISpec, on database: Database) async throws {
+    static func importAllSchemasToDatabase(
+        from spec: OpenAPISpec,
+        serviceID: UUID,
+        on database: Database) async throws {
         // Извлекаем все схемы
         let extractedSchemas = AllSchemasExtractor.extractAllSchemas(from: spec)
         
@@ -183,7 +186,8 @@ class DatabaseSchemaImporter {
                 name: extractedSchema.name,
                 schema: extractedSchema.schema,
                 parentName: nil,
-                schemaModelsByName: &schemaModelsByName,
+                schemaModelsByName: &schemaModelsByName, 
+                serviceID: serviceID,
                 on: database
             )
             
@@ -197,6 +201,7 @@ class DatabaseSchemaImporter {
         schema: Schema,
         parentName: String?,
         schemaModelsByName: inout [String: SchemaModel],
+        serviceID: UUID,
         on database: Database
     ) async throws -> SchemaModel {
         // Проверяем, не создали ли мы уже эту схему
@@ -205,7 +210,8 @@ class DatabaseSchemaImporter {
         }
         
         let schemaModel = SchemaModel(
-            name: name
+            name: name,
+            serviceID: serviceID
         )
         
         try await schemaModel.save(on: database)

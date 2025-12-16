@@ -336,6 +336,9 @@ public final class SchemaModel: Model, Content, Sendable {
     @Children(for: \.$schema)
     public var attributes: [SchemaAttributeModel]
     
+    @Parent(key: "service_id")
+    public var service: ServiceModel
+    
     // запрос для вызова
     @OptionalParent(key: "api_call_id")
     public var apiCall: APICallModel?
@@ -358,10 +361,12 @@ public final class SchemaModel: Model, Content, Sendable {
     
     public init(
         id: UUID? = nil,
-        name: String
+        name: String,
+        serviceID: UUID
     ) {
         self.id = id
         self.name = name
+        self.$service.id = serviceID
     }
 }
 

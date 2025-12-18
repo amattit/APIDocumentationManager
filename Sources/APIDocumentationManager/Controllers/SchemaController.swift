@@ -144,17 +144,30 @@ struct SchemaController: RouteCollection {
     }
     
     // Получить схему по API вызову
-    func getByAPICall(req: Request) async throws -> SchemaModel {
+    func getByAPICall(req: Request) async throws -> SchemasByAPICallResponse {
         guard let callId = req.parameters.get("callId", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         
-        guard let schema = try await SchemaModel.query(on: req.db)
-            .filter(\.$apiCall.$id == callId)
-            .with(\.$attributes)
-            .first()
-        else { throw Abort(.notFound, reason: "Schema not found")}
-        return schema
+        guard let apiCall = try await APICallModel.find(callId, on: req.db) else {
+            throw Abort(.notFound, reason: "API Call not found")
+        }
+          
+        try await apiCall.$requestModels.load(on: req.db)
+        for model in apiCall.requestModels {
+            try await model.$attributes.load(on: req.db)
+        }
+        try await apiCall.$responses.load(on: req.db)
+        for response in apiCall.responses {
+            try await response.$schemas.load(on: req.db)
+            for model in response.schemas {
+                try await model.$attributes.load(on: req.db)
+            }
+        }
+        
+        let responseSchemas = apiCall.responses.flatMap { $0.schemas }
+        
+        return SchemasByAPICallResponse(requests: apiCall.requestModels, responses: responseSchemas)
     }
     
     // Получить схему по ответу API

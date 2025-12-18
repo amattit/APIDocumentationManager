@@ -93,6 +93,11 @@ public struct CreateResponseDTO: Content, Sendable {
     let headers: [String: String]?
 }
 
+public struct SchemasByAPICallResponse: Content, Sendable {
+    let requests: [SchemaModel]
+    let responses: [SchemaModel]
+}
+
 public struct UpdateResponseDTO: Content, Sendable {
     let statusCode: Int?
     let description: String?

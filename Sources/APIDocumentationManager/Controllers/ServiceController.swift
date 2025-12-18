@@ -59,7 +59,7 @@ public struct ServiceController: RouteCollection {
             .filter(\.$id, .equal, serviceID)
             .with(\.$environments)
             .with(\.$apiCalls, {
-                $0.with(\.$requestModel)
+                $0.with(\.$requestModels)
                 $0.with(\.$parameters)
                 $0.with(\.$responses, { $0.with(\.$schemas) } )
             })

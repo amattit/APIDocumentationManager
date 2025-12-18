@@ -23,6 +23,7 @@ public struct APIDocumentationConfiguration {
                 CreateAPIResponseModelMigration(),
                 CreateSchemaModelMigration(),
                 CreateAPIResponseSchemaMigration(),
+                CreateAPICallRequestSchemaMigration(),
                 CreateSchemaAttributeModelMigration(),
             ],
             collections: [

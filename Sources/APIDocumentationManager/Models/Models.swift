@@ -153,8 +153,13 @@ public final class APICallModel: Model, Content, Sendable {
     @Children(for: \.$apiCall)
     public var responses: [APIResponseModel]
     
-    @OptionalChild(for: \.$apiCall)
-    public var requestModel: SchemaModel?
+    // Связь многие-ко-многим с SchemaModel
+    @Siblings(
+        through: APICallRequestSchemaModel.self,
+        from: \.$apiRequest,
+        to: \.$schema
+    )
+    public var requestModels: [SchemaModel]
     
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
@@ -253,6 +258,9 @@ public final class APIResponseSchemaModel: Model {
     @Parent(key: "schema_id")
     public var schema: SchemaModel
     
+    @Field(key: "schema_type")
+    public var type: String?
+    
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
     
@@ -265,6 +273,38 @@ public final class APIResponseSchemaModel: Model {
     ) {
         self.id = id
         self.$apiResponse.id = apiResponseID
+        self.$schema.id = schemaID
+    }
+}
+
+// MARK: API Call Request Schema Pivot
+public final class APICallRequestSchemaModel: Model {
+    public static let schema = "api_call_request_schema"
+    
+    @ID(key: .id)
+    public var id: UUID?
+    
+    @Parent(key: "api_call_request_id")
+    public var apiRequest: APICallModel
+    
+    @Parent(key: "schema_id")
+    public var schema: SchemaModel
+    
+    @Field(key: "schema_type")
+    public var type: String?
+    
+    @Timestamp(key: "created_at", on: .create)
+    public var createdAt: Date?
+    
+    public init() {}
+    
+    public init(
+        id: UUID? = nil,
+        apiRequestId: UUID,
+        schemaID: UUID
+    ) {
+        self.id = id
+        self.$apiRequest.id = apiRequestId
         self.$schema.id = schemaID
     }
 }
@@ -339,10 +379,6 @@ public final class SchemaModel: Model, Content, Sendable {
     @Parent(key: "service_id")
     public var service: ServiceModel
     
-    // запрос для вызова
-    @OptionalParent(key: "api_call_id")
-    public var apiCall: APICallModel?
-    
     // Связь многие-ко-многим с APIResponseModel
     @Siblings(
         through: APIResponseSchemaModel.self,
@@ -350,6 +386,14 @@ public final class SchemaModel: Model, Content, Sendable {
         to: \.$apiResponse
     )
     public var apiResponses: [APIResponseModel]
+    
+    // Связь многие-ко-многим с APICallModel
+    @Siblings(
+        through: APICallRequestSchemaModel.self,
+        from: \.$schema,
+        to: \.$apiRequest
+    )
+    public var apiCalls: [APICallModel]
     
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?

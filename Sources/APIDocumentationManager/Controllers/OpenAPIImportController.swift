@@ -107,12 +107,16 @@ struct OpenAPIImportController: RouteCollection {
             stats.importedParameters += parameterModels.count
             
             // requestBody
-            if let requestDataModel = SchemaModelProcessor.extractRequestBodySchemas(from: call, with: spec) {
+            let sdt = SchemaModelProcessor.extractRequestBodySchemas(from: call, with: spec)
+            
+            if let requestDataModel = sdt.0 {
                 if let model = try await SchemaModel
                     .query(on: db)
                     .filter(\.$name == requestDataModel)
                     .first() {
-                    model.$apiCall.id = try apiCall.requireID()
+                    try await model.$apiCalls.attach(apiCall, on: db) { pivot in
+                        pivot.type = sdt.1
+                    }
                     try await model.save(on: db)
                     stats.linkedSchemas += 1
                 }
@@ -129,13 +133,17 @@ struct OpenAPIImportController: RouteCollection {
                 )
                 try await responseModel.save(on: db)
                 stats.importedResponses += 1
-                if let responseDataModels = SchemaModelProcessor.extractResponseBodySchemas(from: response, with: spec, and: call) {
-                    
-
+                let sdt = SchemaModelProcessor.extractResponseBodySchemas(
+                    from: response,
+                    and: call
+                )
+                if let responseDataModel = sdt.0 {
                     if let responseSchema = try await SchemaModel.query(on: db)
-                        .filter(\.$name == responseDataModels )
+                        .filter(\.$name == responseDataModel )
                         .first() {
-                        try await responseSchema.$apiResponses.attach(responseModel, on: db)
+                        try await responseSchema.$apiResponses.attach(responseModel, on: db) { pivot in
+                            pivot.type = sdt.1
+                        }
                         try await responseSchema.save(on: db)
                         stats.linkedSchemas += 1
                     }
@@ -156,19 +164,23 @@ class SchemaModelProcessor {
     // MARK: - Основные методы
     
     /// Извлекает все requestBody из спецификации и преобразует их в данные для SchemaModel
-    static func extractRequestBodySchemas(from endpoint: EndpointInfo, with spec: OpenAPISpec) -> String? {
+    static func extractRequestBodySchemas(from endpoint: EndpointInfo, with spec: OpenAPISpec) -> (String?, String?) {
         
         // Проверяем, есть ли requestBody в операции
         guard let requestBody = endpoint.operation.requestBody,
               let jsonContent = requestBody.content["application/json"],
               let schema = jsonContent.schema else {
-            return nil
+            return (nil, nil)
         }
         
         // Генерируем имя для схемы
         let schemaName: String
+        var schemaType: String?
         if let ref = schema.ref {
             schemaName = extractSchemaName(from: ref)
+        } else if let ref = schema.items?.ref {
+            schemaName = extractSchemaName(from: ref)
+            schemaType = "Items"
         } else {
             schemaName = generateSchemaName(
                 from: endpoint.operation.operationId ?? "",
@@ -177,21 +189,25 @@ class SchemaModelProcessor {
             )
         }
         
-        return schemaName
+        return (schemaName, schemaType)
     }
     
     /// Извлекает все responseBody из спецификации
-    static func extractResponseBodySchemas(from response: ResponseInfo, with spec: OpenAPISpec, and endpoint: EndpointInfo) -> String? {
+    static func extractResponseBodySchemas(from response: ResponseInfo, and endpoint: EndpointInfo) -> (String?, String?) {
         
         guard
             let content = response.response.content?["application/json"],
             let schema = content.schema else {
-            return nil
+            return (nil, nil)
         }
         
         let schemaName: String
+        var schemaType: String?
         if let ref = schema.ref {
             schemaName = extractSchemaName(from: ref)
+        } else if let ref = schema.items?.ref {
+            schemaName = extractSchemaName(from: ref)
+            schemaType = "Items"
         } else {
             // Генерируем имя для схемы
             schemaName = generateSchemaName(
@@ -202,7 +218,7 @@ class SchemaModelProcessor {
                 statusCode: response.statusCode
             )
         }
-        return schemaName
+        return (schemaName, schemaType)
     }
     
     // MARK: - Вспомогательные методы

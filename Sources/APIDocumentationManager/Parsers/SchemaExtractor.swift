@@ -221,7 +221,7 @@ class DatabaseSchemaImporter {
             for (propertyName, propertySchema) in properties {
                 let attributeModel = SchemaAttributeModel(
                     name: propertyName,
-                    type: propertySchema.type?.value ?? "string",
+                    type: propertySchema.type?.value ?? propertySchema.ref?.components(separatedBy: "/").last ?? "unknown",
                     isNullable: propertySchema.nullable ?? false,
                     description: propertySchema.description ?? "",
                     defaultValue: propertySchema.default,

@@ -143,6 +143,7 @@ struct CreateAPIResponseSchemaMigration: AsyncMigration {
             .id()
             .field("api_response_id", .uuid, .required, .references("api_responses", "id", onDelete: .cascade))
             .field("schema_id", .uuid, .required, .references("schemas", "id", onDelete: .cascade))
+            .field("schema_type", .string)
             .field("created_at", .datetime)
             .unique(on: "api_response_id", "schema_id")
             .create()
@@ -152,6 +153,24 @@ struct CreateAPIResponseSchemaMigration: AsyncMigration {
         try await database.schema("api_response_schema").delete()
     }
 }
+
+struct CreateAPICallRequestSchemaMigration: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        try await database.schema(APICallRequestSchemaModel.schema)
+            .id()
+            .field("api_call_request_id", .uuid, .required, .references("api_calls", "id", onDelete: .cascade))
+            .field("schema_id", .uuid, .required, .references("schemas", "id", onDelete: .cascade))
+            .field("schema_type", .string)
+            .field("created_at", .datetime)
+            .unique(on: "api_call_request_id", "schema_id")
+            .create()
+    }
+    
+    func revert(on database: Database) async throws {
+        try await database.schema("api_response_schema").delete()
+    }
+}
+
 
 struct CreateSchemaAttributeModelMigration: AsyncMigration {
     func prepare(on database: Database) async throws {

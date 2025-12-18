@@ -42,7 +42,7 @@ struct APICallController: RouteCollection {
                     $0.with(\.$attributes)
                 })
             })
-            .with(\.$requestModel, { $0.with(\.$attributes) })
+            .with(\.$requestModels, { $0.with(\.$attributes) })
             .all()
     }
     
@@ -64,8 +64,10 @@ struct APICallController: RouteCollection {
                 try await schema.$attributes.load(on: req.db)
             }
         }
-        try await apiCall.$requestModel.load(on: req.db)
-        try await apiCall.requestModel?.$attributes.load(on: req.db)
+        try await apiCall.$requestModels.load(on: req.db)
+        for requestModel in apiCall.requestModels {
+            try await requestModel.$attributes.load(on: req.db)
+        }
         
         return apiCall
     }
@@ -288,7 +290,7 @@ struct APICallController: RouteCollection {
                     $0.with(\.$attributes)
                 })
             })
-            .with(\.$requestModel, { $0.with(\.$attributes) })
+            .with(\.$requestModels, { $0.with(\.$attributes) })
             .all()
     }
     
@@ -349,9 +351,9 @@ struct APICallController: RouteCollection {
         else {
             throw Abort(.notFound, reason: "response not found")
         }
-        schema.$apiCall.id = input.apiCallId
+        try await schema.$apiCalls.attach(apiCall, on: req.db)
         try await schema.save(on: req.db)
-        try await apiCall.$requestModel.load(on: req.db)
+        try await apiCall.$requestModels.load(on: req.db)
         return apiCall
     }
 }
